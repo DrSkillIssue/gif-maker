@@ -25,7 +25,6 @@ dotnet publish "$REPO_ROOT" -c Release -r linux-x64 --self-contained true -o pub
 APPDIR="$SCRIPT_DIR/build/AppDir"
 mkdir -p "$APPDIR/usr/bin"
 mkdir -p "$APPDIR/usr/share/applications"
-mkdir -p "$APPDIR/usr/share/icons/hicolor/scalable/apps"
 mkdir -p "$APPDIR/usr/share/metainfo"
 
 # Install binary
@@ -36,13 +35,6 @@ chmod 755 "$APPDIR/usr/bin/gifmaker"
 cp "$REPO_ROOT/gifmaker.desktop.in" "$APPDIR/usr/share/applications/com.gifmaker.app.desktop"
 # Also copy to AppDir root (required by AppImage)
 cp "$REPO_ROOT/gifmaker.desktop.in" "$APPDIR/com.gifmaker.app.desktop"
-
-# Install icon
-cp "$REPO_ROOT/data/icons/hicolor/scalable/apps/com.gifmaker.app.svg" "$APPDIR/usr/share/icons/hicolor/scalable/apps/"
-# Also copy to AppDir root (required by AppImage)
-cp "$REPO_ROOT/data/icons/hicolor/scalable/apps/com.gifmaker.app.svg" "$APPDIR/com.gifmaker.app.svg"
-# Create symlink for .DirIcon
-ln -sf com.gifmaker.app.svg "$APPDIR/.DirIcon"
 
 # Install metainfo
 cp "$REPO_ROOT/com.gifmaker.app.metainfo.xml" "$APPDIR/usr/share/metainfo/"

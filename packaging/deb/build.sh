@@ -26,7 +26,6 @@ dotnet publish -c Release -r linux-x64 --self-contained true -o "$SCRIPT_DIR/bui
 # Create directory structure
 mkdir -p "$PKG_DIR/usr/bin"
 mkdir -p "$PKG_DIR/usr/share/applications"
-mkdir -p "$PKG_DIR/usr/share/icons/hicolor/scalable/apps"
 mkdir -p "$PKG_DIR/usr/share/metainfo"
 mkdir -p "$PKG_DIR/usr/share/doc/$PKG_NAME"
 mkdir -p "$PKG_DIR/DEBIAN"
@@ -37,9 +36,6 @@ chmod 755 "$PKG_DIR/usr/bin/gifmaker"
 
 # Install desktop file
 cp "$REPO_ROOT/gifmaker.desktop.in" "$PKG_DIR/usr/share/applications/com.gifmaker.app.desktop"
-
-# Install icon
-cp "$REPO_ROOT/data/icons/hicolor/scalable/apps/com.gifmaker.app.svg" "$PKG_DIR/usr/share/icons/hicolor/scalable/apps/"
 
 # Install metainfo
 cp "$REPO_ROOT/com.gifmaker.app.metainfo.xml" "$PKG_DIR/usr/share/metainfo/"

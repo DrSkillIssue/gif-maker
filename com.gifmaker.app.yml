@@ -94,7 +94,6 @@ modules:
       - mv /app/bin/GifMaker /app/bin/gifmaker
       - install -Dm644 gifmaker.desktop.in /app/share/applications/com.gifmaker.app.desktop
       - install -Dm644 com.gifmaker.app.metainfo.xml /app/share/metainfo/com.gifmaker.app.metainfo.xml
-      - install -Dm644 data/icons/hicolor/scalable/apps/com.gifmaker.app.svg /app/share/icons/hicolor/scalable/apps/com.gifmaker.app.svg
     sources:
       - type: dir
         path: .

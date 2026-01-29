@@ -2,32 +2,27 @@
 set -euo pipefail
 
 # GifMaker installer
-# Usage: ./install.sh [--prefix=/usr/local] [--user]
+# Usage: ./install.sh [--system] [--prefix=PATH]
 
-PREFIX="/usr/local"
-USER_INSTALL=false
+PREFIX="$HOME/.local"
 
 for arg in "$@"; do
     case $arg in
         --prefix=*) PREFIX="${arg#*=}" ;;
-        --user) USER_INSTALL=true ;;
+        --system) PREFIX="/usr/local" ;;
         --help|-h)
-            echo "Usage: $0 [--prefix=/usr/local] [--user]"
-            echo "  --prefix=PATH  Install to PATH (default: /usr/local)"
-            echo "  --user         Install to ~/.local (sets prefix automatically)"
+            echo "Usage: $0 [--system] [--prefix=PATH]"
+            echo "  --system       Install to /usr/local (requires sudo)"
+            echo "  --prefix=PATH  Install to PATH"
+            echo "  Default: ~/.local"
             exit 0
             ;;
         *) echo "Unknown option: $arg"; exit 1 ;;
     esac
 done
 
-if $USER_INSTALL; then
-    PREFIX="$HOME/.local"
-fi
-
 BINDIR="$PREFIX/bin"
 APPDIR="$PREFIX/share/applications"
-ICONDIR="$PREFIX/share/icons/hicolor/scalable/apps"
 
 echo "Installing GifMaker to $PREFIX"
 
@@ -49,10 +44,5 @@ chmod +x "$BINDIR/gifmaker"
 echo "Installing desktop file to $APPDIR"
 mkdir -p "$APPDIR"
 cp gifmaker.desktop.in "$APPDIR/com.gifmaker.app.desktop"
-
-# Install icon
-echo "Installing icon to $ICONDIR"
-mkdir -p "$ICONDIR"
-cp data/icons/hicolor/scalable/apps/com.gifmaker.app.svg "$ICONDIR/"
 
 echo "Done. Make sure $BINDIR is in your PATH."

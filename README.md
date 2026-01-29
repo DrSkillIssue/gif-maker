@@ -1,6 +1,6 @@
 # GIF Maker
 
-> NOTE! This was vibe-coded for my own personal use. 
+**NOTE** - Vibe-coded for personal use. Only tested on Ubuntu 24.04.
 
 Lightweight Ubuntu 24.04 screen recorder. Capture any screen region as GIF, MP4, or WebM.
 
@@ -78,11 +78,17 @@ flatpak install flathub com.gifmaker.app
 ### From source
 
 ```bash
-# User install (~/.local/bin)
-./install.sh --user
+./install.sh                # User install (~/.local/bin)
+sudo ./install.sh --system  # System install (/usr/local/bin)
+```
 
-# System install (/usr/local/bin)
-sudo ./install.sh
+## Uninstall
+
+```bash
+sudo apt remove gifmaker                # .deb
+flatpak uninstall com.gifmaker.app      # Flatpak
+./uninstall.sh --user                   # source (user)
+sudo ./uninstall.sh                     # source (system)
 ```
 
 ## Building Packages
