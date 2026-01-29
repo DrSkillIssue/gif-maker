@@ -1,140 +1,90 @@
 # GIF Maker
 
-**NOTE** - Vibe-coded for personal use. Only tested on Ubuntu 24.04.
+Lightweight Linux screen recorder. Capture any region as GIF, MP4, or WebM.
 
-Lightweight Ubuntu 24.04 screen recorder. Capture any screen region as GIF, MP4, or WebM.
+> Vibe-coded for personal use. Tested on Ubuntu 24.04 + X11.
 
 ## Features
 
-- **Area selection**: Click and drag to select any screen region
-- **Multiple formats**: GIF, MP4, WebM output
-- **Configurable FPS**: 15, 24, 30, or 60 fps
-- **Global hotkey**: Ctrl+Alt+S to start capture
-- **Visual feedback**: Red border overlay shows recording region
-- **Clipboard support**: Copy output file directly to clipboard
-
-## Requirements
-
-- Linux with X11 (Wayland: limited functionality)
-- .NET 10 runtime
-- FFmpeg
-- slop (for area selection)
-
-### Install dependencies (Debian/Ubuntu)
-
-```bash
-sudo apt install ffmpeg slop
-```
-
-## Build
-
-```bash
-dotnet build                    # Debug
-dotnet build -c Release         # Release
-dotnet publish -c Release       # Self-contained binary
-```
-
-Output: `publish/gifmaker`
-
-## Run
-
-```bash
-dotnet run                      # Development
-./publish/gifmaker              # Published binary
-```
-
-## Usage
-
-1. Launch the application
-2. Press **Ctrl+Alt+S** or click **Select Area**
-3. Click and drag to select the region to record
-4. Configure format, FPS, and output directory
-5. Click **Record** to start, **Stop** to finish
-6. **Open** to view the file or **Copy** to clipboard
+- Area selection with click-and-drag
+- Output formats: GIF, MP4, WebM
+- Frame rates: 15, 24, 30, 60 fps
+- Global hotkey: `Ctrl+Alt+S`
+- Red border overlay during recording
+- Copy to clipboard
 
 ## Install
-
-### Debian/Ubuntu (.deb)
-
-```bash
-sudo apt install ./gifmaker_1.0.0_amd64.deb
-```
-
-### AppImage
-
-```bash
-chmod +x GifMaker-1.0.0-x86_64.AppImage
-./GifMaker-1.0.0-x86_64.AppImage
-```
-
-Requires host system to have: GTK4, X11, ffmpeg, slop.
-
-### Flatpak (from Flathub)
-
-```bash
-flatpak install flathub com.gifmaker.app
-```
 
 ### From source
 
 ```bash
-./install.sh                # User install (~/.local/bin)
-sudo ./install.sh --system  # System install (/usr/local/bin)
+sudo apt install ffmpeg slop libgtk-4-1 libx11-6 libxext6 xdg-utils
+./install.sh                # ~/.local/bin
+sudo ./install.sh --system  # /usr/local/bin
 ```
 
 ## Uninstall
 
 ```bash
-sudo apt remove gifmaker                # .deb
-flatpak uninstall com.gifmaker.app      # Flatpak
-./uninstall.sh --user                   # source (user)
-sudo ./uninstall.sh                     # source (system)
+./uninstall.sh
 ```
 
-## Building Packages
+## Dependencies
 
-### .deb package
+| Package (apt)   | Purpose              |
+|-----------------|----------------------|
+| `libgtk-4-1`    | UI toolkit           |
+| `libx11-6`      | Display server       |
+| `libxext6`      | X11 extensions       |
+| `ffmpeg`        | Recording & encoding |
+| `slop`          | Area selection       |
+| `xdg-utils`     | File opening         |
+
+## Usage
+
+1. Launch GIF Maker
+2. `Ctrl+Alt+S` or click **Select Area**
+3. Drag to select region
+4. Choose format, FPS, output directory
+5. **Record** → **Stop**
+6. **Open** or **Copy** to clipboard
+
+## Building
 
 ```bash
-# Requires: dotnet-sdk-10.0, fakeroot
-VERSION=1.0.0 ./packaging/deb/build.sh
+dotnet build                    # Debug
+dotnet build -c Release         # Release
+dotnet run                      # Run
 ```
 
-Output: `gifmaker_1.0.0_amd64.deb`
-
-### AppImage
+### Packaging (for distribution)
 
 ```bash
-# Requires: dotnet-sdk-10.0, wget
-VERSION=1.0.0 ./packaging/appimage/build.sh
+# Requires: fakeroot
+VERSION=1.0.0 ./packaging/deb/build.sh       # → gifmaker_1.0.0_amd64.deb
+
+# Requires: wget
+VERSION=1.0.0 ./packaging/appimage/build.sh  # → GifMaker-1.0.0-x86_64.AppImage
 ```
 
-Output: `GifMaker-1.0.0-x86_64.AppImage`
-
-### Flatpak
-
-Submit to [Flathub](https://github.com/flathub/flathub) - they build and host it.
+Flatpak: submit manifest to [Flathub](https://github.com/flathub/flathub).
 
 ## Architecture
 
 ```
 src/
-  App/        # GTK4 UI, main window, record window
+  App/        # GTK4 UI
   Core/       # Result<T>, Rectangle, interfaces
-  Recording/  # FFmpeg x11grab screen capture
-  Conversion/ # FFmpeg format conversion
-  X11/        # P/Invoke for X11, hotkeys, area selection
+  Recording/  # FFmpeg x11grab
+  Conversion/ # Format conversion
+  X11/        # P/Invoke, hotkeys, area selection
 ```
 
-## Technical Notes
+## Limitations
 
-- **GTK4** via GirCore bindings
-- **X11** for global hotkeys and precise window positioning
-- **FFmpeg** x11grab for capture, libx264 for encoding
-- **slop** for interactive area selection
-- State machines modeled as sealed record hierarchies (discriminated unions)
-- `Result<T>` for explicit error handling without exceptions
+- X11 only (Wayland: no global hotkeys, no window positioning)
+- Linux only
 
 ## License
 
-MIT
+MIT - DrSkillIssue
