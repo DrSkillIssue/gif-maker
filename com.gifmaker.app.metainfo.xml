@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.gifmaker.app</id>
+  <name>GIF Maker</name>
+  <summary>Record screen regions as GIF, MP4, or WebM</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  
+  <description>
+    <p>
+      Lightweight screen recorder for Linux. Select any screen region and capture it as an animated GIF, MP4, or WebM video.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Click and drag area selection</li>
+      <li>Multiple output formats: GIF, MP4, WebM</li>
+      <li>Configurable frame rate: 15, 24, 30, or 60 fps</li>
+      <li>Global hotkey (Ctrl+Alt+S) to start capture</li>
+      <li>Visual recording indicator with red border overlay</li>
+      <li>Copy output directly to clipboard</li>
+    </ul>
+  </description>
+  
+  <launchable type="desktop-id">com.gifmaker.app.desktop</launchable>
+  
+  <url type="homepage">https://github.com/OWNER/gif-maker</url>
+  <url type="bugtracker">https://github.com/OWNER/gif-maker/issues</url>
+  
+  <developer id="com.gifmaker">
+    <name>GIF Maker Developers</name>
+  </developer>
+  
+  <provides>
+    <binary>gifmaker</binary>
+  </provides>
+  
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+  
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  
+  <categories>
+    <category>AudioVideo</category>
+    <category>Recorder</category>
+    <category>GTK</category>
+  </categories>
+  
+  <keywords>
+    <keyword>gif</keyword>
+    <keyword>screen</keyword>
+    <keyword>record</keyword>
+    <keyword>video</keyword>
+    <keyword>capture</keyword>
+    <keyword>screencast</keyword>
+  </keywords>
+  
+  <screenshots>
+    <screenshot type="default">
+      <caption>Recording window with format selection</caption>
+      <image>https://raw.githubusercontent.com/OWNER/gif-maker/main/screenshots/main.png</image>
+    </screenshot>
+  </screenshots>
+  
+  <releases>
+    <release version="1.0.0" date="2026-01-29">
+      <description>
+        <p>Initial release</p>
+      </description>
+    </release>
+  </releases>
+  
+  <content_rating type="oars-1.1" />
+</component>

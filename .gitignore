@@ -1,0 +1,96 @@
+# Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.csproj.user
+
+# Rider
+.idea/
+
+# NuGet
+*.nupkg
+*.snupkg
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+
+# Test results
+[Tt]est[Rr]esult*/
+*.trx
+*.coverage
+*.coveragexml
+
+# NCrunch
+*.ncrunch*
+_NCrunch_*
+
+# Build outputs
+*.dll
+*.exe
+*.pdb
+*.ilk
+*.meta
+
+# Cache
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# Publish
+[Pp]ublish*/
+
+# User-specific
+*.rsuser
+*.DotSettings.user
+
+# JetBrains
+*.sln.iml
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Misc
+*.tmp
+*.temp
+*.log
+*.bak
+
+# opensrc - source code for packages
+opensrc/
+
+# Flatpak
+.flatpak-builder/
+build-dir/
+repo/
+*.flatpak
+
+# Packaging
+packaging/*/build/
+*.deb
+*.AppImage
+*.zsync
+
+# AppImage tools
+appimagetool*.AppImage
+linuxdeploy*.AppImage

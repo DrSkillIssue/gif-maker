@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=GIF Maker
+Comment=Record screen to GIF, MP4, or WebM
+Exec=gifmaker
+Icon=com.gifmaker.app
+Terminal=false
+Categories=AudioVideo;Recorder;GTK;
+Keywords=gif;screen;record;video;capture;

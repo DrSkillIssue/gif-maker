@@ -1,0 +1,100 @@
+app-id: com.gifmaker.app
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.dotnet10
+
+command: gifmaker
+
+finish-args:
+  # X11 access (required for x11grab and hotkeys)
+  - --socket=x11
+  - --share=ipc
+  # Wayland (limited functionality)
+  - --socket=wayland
+  # Filesystem for saving recordings
+  - --filesystem=xdg-videos
+  - --filesystem=xdg-download
+  # GPU acceleration
+  - --device=dri
+
+modules:
+  # slop - screen region selector (includes slopy library)
+  - name: slop
+    buildsystem: cmake-ninja
+    sources:
+      - type: archive
+        url: https://github.com/naelstrof/slop/archive/refs/tags/v7.6.tar.gz
+        sha256: ec45f9a69d7a24df621f5c634d202451ddca987d550cf588c5c427b99106fb6b
+
+  # x264 codec
+  - name: x264
+    buildsystem: autotools
+    config-opts:
+      - --enable-shared
+      - --disable-static
+      - --disable-cli
+    sources:
+      - type: archive
+        url: https://code.videolan.org/videolan/x264/-/archive/stable/x264-stable.tar.bz2
+        sha256: 740126cb48549ca4e2f09b4ae13beed592d5b54744044e38f28662fd96d0ba56
+
+  # x265 codec
+  - name: x265
+    buildsystem: cmake-ninja
+    subdir: source
+    config-opts:
+      - -DENABLE_CLI=OFF
+    sources:
+      - type: archive
+        url: https://bitbucket.org/multicoreware/x265_git/get/Release_4.0.tar.gz
+        sha256: 26b8384f1f34a01ce7337a77ed9ca75317b03d018b3cd7c1c0f9a1de55706178
+
+  # libvpx codec
+  - name: libvpx
+    buildsystem: autotools
+    config-opts:
+      - --enable-shared
+      - --disable-static
+      - --disable-examples
+      - --disable-tools
+    sources:
+      - type: archive
+        url: https://github.com/webmproject/libvpx/archive/refs/tags/v1.14.1.tar.gz
+        sha256: 901747254d80a7937c933d03bd7c5d41e8e6c883e0665fadcb172542167c7977
+
+  # FFmpeg with x11grab support
+  - name: ffmpeg
+    buildsystem: autotools
+    config-opts:
+      - --enable-shared
+      - --disable-static
+      - --disable-doc
+      - --enable-gpl
+      - --enable-libx264
+      - --enable-libx265
+      - --enable-libvpx
+    sources:
+      - type: archive
+        url: https://ffmpeg.org/releases/ffmpeg-7.0.tar.xz
+        sha256: 4426a94dd2c814945456600c8adfc402bee65ec14a70e8c531ec9a2cd651da7b
+
+  # GifMaker application
+  - name: gifmaker
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/dotnet10/bin
+      append-ld-library-path: /usr/lib/sdk/dotnet10/lib
+      env:
+        DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+        DOTNET_NOLOGO: '1'
+    build-commands:
+      - dotnet publish -c Release -o /app/bin --self-contained true -r linux-x64
+      - mv /app/bin/GifMaker /app/bin/gifmaker
+      - install -Dm644 gifmaker.desktop.in /app/share/applications/com.gifmaker.app.desktop
+      - install -Dm644 com.gifmaker.app.metainfo.xml /app/share/metainfo/com.gifmaker.app.metainfo.xml
+      - install -Dm644 data/icons/hicolor/scalable/apps/com.gifmaker.app.svg /app/share/icons/hicolor/scalable/apps/com.gifmaker.app.svg
+    sources:
+      - type: dir
+        path: .
