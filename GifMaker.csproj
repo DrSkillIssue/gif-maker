@@ -12,14 +12,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="GirCore.Gtk-4.0" Version="*" />
+    <PackageReference Include="GirCore.Gtk-4.0" Version="0.7.0" />
     <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.2" />
     <PackageReference Include="Microsoft.Extensions.ObjectPool" Version="10.0.2" />
-  </ItemGroup>
-
-  <!-- Exclude opensrc reference sources from compilation -->
-  <ItemGroup>
-    <Compile Remove="opensrc/**/*.cs" />
   </ItemGroup>
 
 </Project>
