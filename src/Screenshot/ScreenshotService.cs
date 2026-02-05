@@ -12,8 +12,6 @@ namespace GifMaker.Screenshot;
 [SupportedOSPlatform("linux")]
 public sealed class ScreenshotService
 {
-    private static readonly string DefaultOutputDir = GetDefaultOutputDir();
-
     private readonly ILogger _logger;
     private readonly IProcessRunner _processRunner;
     private readonly ScreenshotCapture _capture;
@@ -75,11 +73,7 @@ public sealed class ScreenshotService
         string? outputDir = null,
         CancellationToken ct = default)
     {
-        var dir = outputDir ?? DefaultOutputDir;
-        Directory.CreateDirectory(dir);
-
-        var filename = GenerateFilename();
-        var outputPath = Path.Combine(dir, filename);
+        var outputPath = OutputPaths.GenerateScreenshotPath(outputDir);
 
         var settingsResult = ScreenshotCapture.CaptureSettings.Create(
             region, showPointer, fixedCursorPosition: fixedCursorPosition);
@@ -111,19 +105,5 @@ public sealed class ScreenshotService
             return Result<Rectangle>.Fail("Failed to get screen bounds");
 
         return Result<Rectangle>.Ok(new Rectangle(0, 0, bounds.Value.Width, bounds.Value.Height));
-    }
-
-    private static string GenerateFilename() =>
-        $"ss_{DateTime.Now:yyyyMMdd_HHmmss}.png";
-
-    private static string GetDefaultOutputDir()
-    {
-        var picturesDir = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
-        if (string.IsNullOrEmpty(picturesDir))
-        {
-            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            picturesDir = Path.Combine(home, "Pictures");
-        }
-        return Path.Combine(picturesDir, "Screenshots");
     }
 }

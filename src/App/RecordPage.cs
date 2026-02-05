@@ -61,19 +61,6 @@ public sealed class RecordPage : Box
     private const int DefaultFpsIndex = 2;
     private const int MaxStatusLength = 80;
 
-    private static readonly string DefaultOutputDir = GetDefaultOutputDir();
-
-    private static string GetDefaultOutputDir()
-    {
-        var videosDir = Environment.GetFolderPath(Environment.SpecialFolder.MyVideos);
-        if (string.IsNullOrEmpty(videosDir))
-        {
-            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            videosDir = Path.Combine(home, "Videos");
-        }
-        return videosDir;
-    }
-
     #endregion
 
     #region Fields
@@ -197,7 +184,7 @@ public sealed class RecordPage : Box
         var outputRow = Box.New(Orientation.Horizontal, 8);
         outputRow.Append(Label.New("Save to:"));
         outputDirEntry = Entry.New();
-        outputDirEntry.SetText(DefaultOutputDir);
+        outputDirEntry.SetText(OutputPaths.GetDefaultVideoDir());
         outputDirEntry.Hexpand = true;
         outputDirEntry.TooltipText = "Directory where recordings will be saved";
         outputRow.Append(outputDirEntry);
@@ -473,20 +460,8 @@ public sealed class RecordPage : Box
     private string GenerateOutputPath(OutputFormat format)
     {
         var outputDir = _outputDirEntry.GetText();
-
-        if (string.IsNullOrWhiteSpace(outputDir))
-            outputDir = DefaultOutputDir;
-
-        if (outputDir.StartsWith('~'))
-        {
-            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            outputDir = Path.Combine(home, outputDir[1..].TrimStart('/'));
-        }
-
-        Directory.CreateDirectory(outputDir);
-
-        var filename = $"recording_{DateTime.Now:yyyyMMdd_HHmmss}{format.GetExtension()}";
-        return Path.Combine(outputDir, filename);
+        var dir = string.IsNullOrWhiteSpace(outputDir) ? null : outputDir;
+        return OutputPaths.GenerateRecordingPath(format, dir);
     }
 
     private void CleanupTempFile(string path)

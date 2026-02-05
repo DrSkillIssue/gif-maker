@@ -11,12 +11,16 @@ Categories=AudioVideo;Video;Graphics;Recorder;GTK;
 Keywords=gif;record;screen;capture;screenshot;video;
 StartupNotify=true
 StartupWMClass=com.gifmaker.app
-Actions=screenshot;record;
+Actions=screenshot-selection;screenshot-screen;screenshot-window;
 
-[Desktop Action screenshot]
-Name=Take Screenshot
-Exec=gifmaker --screenshot
+[Desktop Action screenshot-selection]
+Name=Screenshot (Selection)
+Exec=gifmaker screenshot
 
-[Desktop Action record]
-Name=Start Recording
-Exec=gifmaker --record
+[Desktop Action screenshot-screen]
+Name=Screenshot (Full Screen)
+Exec=gifmaker screenshot -m screen
+
+[Desktop Action screenshot-window]
+Name=Screenshot (Window)
+Exec=gifmaker screenshot -m window
