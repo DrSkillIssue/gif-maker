@@ -1,4 +1,4 @@
-using System.Globalization;
+using System.Runtime.Versioning;
 using GifMaker.Core;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -9,6 +9,7 @@ namespace GifMaker.Screenshot;
 /// Captures screenshots using FFmpeg x11grab (single frame).
 /// Thread-safe, testable via process abstraction.
 /// </summary>
+[SupportedOSPlatform("linux")]
 public sealed class ScreenshotCapture
 {
     private const string FFmpegPath = "ffmpeg";
@@ -88,6 +89,7 @@ public sealed class ScreenshotCapture
     /// <param name="outputPath">Path to save PNG file.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>Result with file path on success, error on failure.</returns>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="outputPath"/> is null or whitespace.</exception>
     public async Task<Result<string>> CaptureAsync(
         CaptureSettings settings,
         string outputPath,

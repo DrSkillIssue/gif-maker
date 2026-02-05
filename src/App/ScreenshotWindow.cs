@@ -164,6 +164,19 @@ public sealed class ScreenshotWindow : Window
             picture.CanShrink = true;
             picture.ContentFit = ContentFit.Contain;
 
+            // Enable drag-and-drop from preview
+            var dragSource = DragSource.New();
+            dragSource.SetActions(Gdk.DragAction.Copy);
+            dragSource.OnPrepare += OnDragPrepare;
+            dragSource.OnDragBegin += (source, drag) =>
+            {
+                // Set drag icon to the image texture
+                source.SetIcon(texture, 0, 0);
+            };
+            picture.AddController(dragSource);
+            picture.SetCursor(Gdk.Cursor.NewFromName("grab", null));
+            picture.TooltipText = "Drag to other apps";
+
             // Wrap in frame for visual boundary
             var frame = Frame.New(null);
             frame.Child = picture;
@@ -178,6 +191,17 @@ public sealed class ScreenshotWindow : Window
             _logger.LogWarning(ex, "Failed to load screenshot preview");
             return CreateErrorLabel("Failed to load preview");
         }
+    }
+
+    private Gdk.ContentProvider? OnDragPrepare(DragSource sender, DragSource.PrepareSignalArgs args)
+    {
+        // Provide file URI for drag-and-drop to other apps
+        var file = Gio.FileHelper.NewForPath(_filePath);
+        var uri = file.GetUri();
+
+        // Use text/uri-list format which is widely supported
+        var bytes = GLib.Bytes.New(System.Text.Encoding.UTF8.GetBytes(uri + "\r\n"));
+        return Gdk.ContentProvider.NewForBytes("text/uri-list", bytes);
     }
 
     private static (int Width, int Height) CalculateScaledSize(

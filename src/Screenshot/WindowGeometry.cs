@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.Versioning;
 using System.Text.RegularExpressions;
 using GifMaker.Core;
 
@@ -7,6 +8,7 @@ namespace GifMaker.Screenshot;
 /// <summary>
 /// Gets geometry of the currently focused window using xdotool.
 /// </summary>
+[SupportedOSPlatform("linux")]
 public sealed partial class WindowGeometry
 {
     private readonly IProcessRunner _processRunner;
@@ -70,10 +72,14 @@ public sealed partial class WindowGeometry
         if (!posMatch.Success || !geoMatch.Success)
             return Result<Rectangle>.Fail($"Failed to parse window geometry: {output}");
 
-        var x = int.Parse(posMatch.Groups[1].Value, CultureInfo.InvariantCulture);
-        var y = int.Parse(posMatch.Groups[2].Value, CultureInfo.InvariantCulture);
-        var width = int.Parse(geoMatch.Groups[1].Value, CultureInfo.InvariantCulture);
-        var height = int.Parse(geoMatch.Groups[2].Value, CultureInfo.InvariantCulture);
+        // Use TryParse with ValueSpan to avoid allocation and handle overflow
+        if (!int.TryParse(posMatch.Groups[1].ValueSpan, CultureInfo.InvariantCulture, out var x) ||
+            !int.TryParse(posMatch.Groups[2].ValueSpan, CultureInfo.InvariantCulture, out var y) ||
+            !int.TryParse(geoMatch.Groups[1].ValueSpan, CultureInfo.InvariantCulture, out var width) ||
+            !int.TryParse(geoMatch.Groups[2].ValueSpan, CultureInfo.InvariantCulture, out var height))
+        {
+            return Result<Rectangle>.Fail($"Invalid numeric values in geometry: {output}");
+        }
 
         return Rectangle.CreateValidated(x, y, width, height, "Window has zero area");
     }

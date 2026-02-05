@@ -1,3 +1,4 @@
+using System.Runtime.Versioning;
 using GifMaker.Core;
 using GifMaker.X11;
 using Microsoft.Extensions.Logging;
@@ -8,6 +9,7 @@ namespace GifMaker.Screenshot;
 /// <summary>
 /// High-level screenshot service coordinating capture, save, and clipboard.
 /// </summary>
+[SupportedOSPlatform("linux")]
 public sealed class ScreenshotService
 {
     private static readonly string DefaultOutputDir = GetDefaultOutputDir();
@@ -102,9 +104,9 @@ public sealed class ScreenshotService
 
     private static string GenerateFilename()
     {
-        // Match Ubuntu's format: Screenshot from YYYY-MM-DD HH-MM-SS.png
+        // Match Ubuntu's format with milliseconds to avoid collision on rapid captures
         var now = DateTime.Now;
-        return $"Screenshot from {now:yyyy-MM-dd HH-mm-ss}.png";
+        return $"Screenshot from {now:yyyy-MM-dd HH-mm-ss-fff}.png";
     }
 
     private static string GetDefaultOutputDir()

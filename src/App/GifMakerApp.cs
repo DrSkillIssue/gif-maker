@@ -268,10 +268,14 @@ public sealed class GifMakerApp : IDisposable
 
     private void OnScreenshotModeSelected(CaptureMode mode, bool showPointer)
     {
-        // Selection mode needs to hide overlay and let user select area
+        // Selection mode needs delay for overlay to fully close before slop starts
         if (mode == CaptureMode.Selection)
         {
-            PerformScreenshotSelectionAsync(showPointer);
+            GLib.Functions.TimeoutAdd(0, WindowHideDelayMs, () =>
+            {
+                PerformScreenshotSelectionAsync(showPointer);
+                return false;
+            });
         }
         else
         {
@@ -281,19 +285,39 @@ public sealed class GifMakerApp : IDisposable
 
     private async void PerformScreenshotSelectionAsync(bool showPointer)
     {
-        var service = new ScreenshotService(_logger);
+        // Reuse same area selection logic as recording
+        SelectionResult result;
 
-        // Get region via area selector
-        var regionResult = await service.GetRegionAsync(CaptureMode.Selection).ConfigureAwait(false);
+        try
+        {
+            using var selector = new AreaSelector();
+            var selectResult = await selector.SelectAsync().ConfigureAwait(false);
 
-        regionResult.Match(
-            region => RunOnUiThread(() => CaptureAndShowScreenshot(region, CaptureMode.Selection, showPointer)),
-            error =>
-            {
-                if (error != "Selection cancelled")
-                    _logger.LogWarning("Screenshot selection failed: {Error}", error);
+            result = selectResult.Match<SelectionResult>(
+                rect => rect.IsValid ? new SelectionResult.Success(rect) : new SelectionResult.Cancelled(),
+                error => error == "Selection cancelled"
+                    ? new SelectionResult.Cancelled()
+                    : new SelectionResult.Failed(new SelectionError(error))
+            );
+        }
+        catch (Exception ex)
+        {
+            var error = SelectionError.FromException(ex);
+            _logger.LogError(ex, "Screenshot selection failed: {DiagnosticDetails}", error.DiagnosticDetails);
+            result = new SelectionResult.Failed(error);
+        }
+
+        switch (result)
+        {
+            case SelectionResult.Success success:
+                RunOnUiThread(() => CaptureAndShowScreenshot(success.Region, CaptureMode.Selection, showPointer));
+                break;
+
+            case SelectionResult.Cancelled:
+            case SelectionResult.Failed:
                 RunOnUiThread(PresentMainWindow);
-            });
+                break;
+        }
     }
 
     private async void PerformScreenshotAsync(CaptureMode mode, bool showPointer)

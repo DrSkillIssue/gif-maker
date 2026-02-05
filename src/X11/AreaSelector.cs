@@ -38,8 +38,8 @@ public sealed partial class AreaSelector : IDisposable
     {
         ThrowIfDisposed();
 
-        // -f: format, -b: border width, -c: color (RGBA), -l: classic XP style
-        string[] args = ["-f", "%wx%h+%x+%y", "-b", "4", "-c", "1,0.2,0.2,0.8", "-l"];
+        // -f: format, -b: border width, -c: color (RGBA), -o: disable OpenGL (fallback for headless/no GPU)
+        string[] args = ["-f", "%wx%h+%x+%y", "-b", "4", "-c", "1,0.2,0.2,0.8", "-o"];
 
         ProcessResult result;
         try
