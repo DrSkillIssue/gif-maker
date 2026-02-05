@@ -63,6 +63,7 @@ public sealed class ScreenshotService
     /// <param name="region">Region to capture.</param>
     /// <param name="mode">Capture mode (for result metadata).</param>
     /// <param name="showPointer">Whether to include mouse pointer.</param>
+    /// <param name="fixedCursorPosition">Fixed cursor position for selection mode (captured before selection).</param>
     /// <param name="outputDir">Output directory (defaults to ~/Pictures/Screenshots).</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>Screenshot result with file path.</returns>
@@ -70,6 +71,7 @@ public sealed class ScreenshotService
         Rectangle region,
         CaptureMode mode,
         bool showPointer = false,
+        (int X, int Y)? fixedCursorPosition = null,
         string? outputDir = null,
         CancellationToken ct = default)
     {
@@ -79,12 +81,21 @@ public sealed class ScreenshotService
         var filename = GenerateFilename();
         var outputPath = Path.Combine(dir, filename);
 
-        var captureResult = await _capture.CaptureAsync(region, outputPath, showPointer, ct)
-            .ConfigureAwait(false);
+        var settingsResult = ScreenshotCapture.CaptureSettings.Create(
+            region, showPointer, fixedCursorPosition: fixedCursorPosition);
 
-        return captureResult.Match(
-            path => Result<ScreenshotResult>.Ok(new ScreenshotResult(path, region, mode)),
-            error => Result<ScreenshotResult>.Fail(error));
+        return await settingsResult.Match<Task<Result<ScreenshotResult>>>(
+            async settings =>
+            {
+                var captureResult = await _capture.CaptureAsync(settings, outputPath, ct)
+                    .ConfigureAwait(false);
+
+                return captureResult.Match(
+                    path => Result<ScreenshotResult>.Ok(new ScreenshotResult(path, region, mode)),
+                    error => Result<ScreenshotResult>.Fail(error));
+            },
+            error => Task.FromResult(Result<ScreenshotResult>.Fail(error)))
+            .ConfigureAwait(false);
     }
 
     private async Task<Result<Rectangle>> GetSelectionRegionAsync(CancellationToken ct)
@@ -102,12 +113,8 @@ public sealed class ScreenshotService
         return Result<Rectangle>.Ok(new Rectangle(0, 0, bounds.Value.Width, bounds.Value.Height));
     }
 
-    private static string GenerateFilename()
-    {
-        // Match Ubuntu's format with milliseconds to avoid collision on rapid captures
-        var now = DateTime.Now;
-        return $"Screenshot from {now:yyyy-MM-dd HH-mm-ss-fff}.png";
-    }
+    private static string GenerateFilename() =>
+        $"ss_{DateTime.Now:yyyyMMdd_HHmmss}.png";
 
     private static string GetDefaultOutputDir()
     {

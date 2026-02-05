@@ -71,4 +71,47 @@ public static class WindowPositioner
         var xid = GdkX11SurfaceGetXid(handle);
         return TryMove(xid, x, y);
     }
+
+    /// <summary>
+    /// Gets the current position of a GTK window using X11.
+    /// </summary>
+    /// <param name="surface">GDK surface (must be X11 backend).</param>
+    /// <returns>Window position, or <see langword="null"/> if not X11 or failed.</returns>
+    public static (int X, int Y)? GetWindowPosition(Gdk.Surface surface)
+    {
+        var handle = surface.Handle.DangerousGetHandle();
+        if (handle == nint.Zero)
+            return null;
+
+        var xid = GdkX11SurfaceGetXid(handle);
+        if (xid == 0)
+            return null;
+
+        using var display = DisplayHandle.Open();
+        if (!display.IsValid)
+            return null;
+
+        var root = (nuint)(nint)XDefaultRootWindow(display.Value);
+        if (!XTranslateCoordinates(display.Value, xid, root, 0, 0, out var x, out var y, out _))
+            return null;
+
+        return (x, y);
+    }
+
+    /// <summary>
+    /// Gets the current mouse pointer position (screen coordinates).
+    /// </summary>
+    /// <returns>Pointer position, or <see langword="null"/> if X11 unavailable.</returns>
+    public static (int X, int Y)? GetPointerPosition()
+    {
+        using var display = DisplayHandle.Open();
+        if (!display.IsValid)
+            return null;
+
+        var root = XDefaultRootWindow(display.Value);
+        if (!XQueryPointer(display.Value, root, out _, out _, out var x, out var y, out _, out _, out _))
+            return null;
+
+        return (x, y);
+    }
 }

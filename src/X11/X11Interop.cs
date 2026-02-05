@@ -34,6 +34,12 @@ internal static partial class X11Interop
     internal static partial int XDisplayHeight(nint display, int screen);
 
     [LibraryImport(LibX11)]
+    internal static partial nint XBlackPixel(nint display, int screen);
+
+    [LibraryImport(LibX11)]
+    internal static partial nint XWhitePixel(nint display, int screen);
+
+    [LibraryImport(LibX11)]
     internal static partial int XConnectionNumber(nint display);
 
     [LibraryImport(LibX11)]
@@ -68,6 +74,16 @@ internal static partial class X11Interop
     /// </summary>
     [LibraryImport(LibX11, EntryPoint = "XMoveWindow")]
     internal static partial int XMoveWindowByXid(nint display, nuint window, int x, int y);
+
+    /// <summary>
+    /// Translates coordinates from one window to another.
+    /// Used to get window position relative to root (screen coordinates).
+    /// </summary>
+    [LibraryImport(LibX11)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool XTranslateCoordinates(
+        nint display, nuint srcWindow, nuint destWindow,
+        int srcX, int srcY, out int destX, out int destY, out nuint child);
 
     [LibraryImport(LibX11)]
     internal static partial int XRaiseWindow(nint display, nint window);
@@ -183,6 +199,22 @@ internal static partial class X11Interop
 
     #endregion
 
+    #region Pointer Query
+
+    /// <summary>
+    /// Queries the current pointer position.
+    /// </summary>
+    [LibraryImport(LibX11)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool XQueryPointer(
+        nint display, nint window,
+        out nint rootReturn, out nint childReturn,
+        out int rootX, out int rootY,
+        out int winX, out int winY,
+        out uint maskReturn);
+
+    #endregion
+
     #region Atoms & Properties
 
     [LibraryImport(LibX11, EntryPoint = "XInternAtom", StringMarshalling = StringMarshalling.Utf8)]
@@ -233,6 +265,7 @@ internal static partial class X11Interop
     internal const uint ButtonReleaseMask = 1 << 3;
     internal const uint PointerMotionMask = 1 << 6;
     internal const uint KeyPressMask = 1 << 0;
+    internal const nint ExposureMask = 1 << 15;
 
     // Grab modes
     internal const int GrabModeAsync = 1;

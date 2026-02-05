@@ -1,10 +1,22 @@
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=GIF Maker
+Name=GifMaker
+GenericName=Screen Recorder
 Comment=Record screen to GIF, MP4, or WebM
 Exec=gifmaker
 Icon=camera-video
 Terminal=false
-Categories=AudioVideo;Recorder;GTK;
-Keywords=gif;screen;record;video;capture;
+Categories=AudioVideo;Video;Graphics;Recorder;GTK;
+Keywords=gif;record;screen;capture;screenshot;video;
+StartupNotify=true
+StartupWMClass=com.gifmaker.app
+Actions=screenshot;record;
+
+[Desktop Action screenshot]
+Name=Take Screenshot
+Exec=gifmaker --screenshot
+
+[Desktop Action record]
+Name=Start Recording
+Exec=gifmaker --record
