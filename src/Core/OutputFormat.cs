@@ -7,10 +7,10 @@ public enum OutputFormat
 {
     /// <summary>Graphics Interchange Format - animated, widely supported, larger file size.</summary>
     Gif,
-    
+
     /// <summary>MPEG-4 Part 14 - video, excellent compression, best for sharing.</summary>
     Mp4,
-    
+
     /// <summary>WebM (VP9) - video, open format, good for web.</summary>
     WebM
 }

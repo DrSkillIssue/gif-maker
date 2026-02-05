@@ -24,7 +24,7 @@ public interface IProcessRunner
     /// <param name="ct">Cancellation token.</param>
     /// <returns>Result containing exit code and captured output.</returns>
     Task<ProcessResult> RunAsync(string fileName, IEnumerable<string> arguments, CancellationToken ct = default);
-    
+
     /// <summary>
     /// Starts a process without waiting for completion (fire and forget).
     /// </summary>
@@ -41,9 +41,9 @@ public sealed class ProcessRunner : IProcessRunner
 {
     /// <summary>Singleton instance.</summary>
     public static ProcessRunner Default { get; } = new();
-    
+
     private ProcessRunner() { }
-    
+
     /// <inheritdoc />
     public async Task<ProcessResult> RunAsync(string fileName, IEnumerable<string> arguments, CancellationToken ct = default)
     {
@@ -57,20 +57,20 @@ public sealed class ProcessRunner : IProcessRunner
                 CreateNoWindow = true
             }
         };
-        
+
         foreach (var arg in arguments)
         {
             process.StartInfo.ArgumentList.Add(arg);
         }
-        
+
         process.Start();
-        
+
         // Read both streams concurrently to avoid deadlock.
         // Must await reads alongside WaitForExitAsync to prevent buffer deadlock
         // when process output exceeds OS pipe buffer size.
         var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
         var stderrTask = process.StandardError.ReadToEndAsync(ct);
-        
+
         try
         {
             // Wait for all three to complete: exit + both stream reads
@@ -86,13 +86,13 @@ public sealed class ProcessRunner : IProcessRunner
             TryKillProcess(process);
             throw;
         }
-        
+
         var stdout = await stdoutTask.ConfigureAwait(false);
         var stderr = await stderrTask.ConfigureAwait(false);
-        
+
         return new ProcessResult(process.ExitCode, stdout.Trim(), stderr.Trim());
     }
-    
+
     private static void TryKillProcess(Process process)
     {
         try
@@ -105,7 +105,7 @@ public sealed class ProcessRunner : IProcessRunner
             // Process already exited
         }
     }
-    
+
     /// <inheritdoc />
     public bool StartDetached(string fileName, IEnumerable<string> arguments)
     {
@@ -120,12 +120,12 @@ public sealed class ProcessRunner : IProcessRunner
                 RedirectStandardError = false,
                 CreateNoWindow = true
             };
-            
+
             foreach (var arg in arguments)
             {
                 startInfo.ArgumentList.Add(arg);
             }
-            
+
             // Don't dispose - we want the process to continue running
             var process = Process.Start(startInfo);
             return process is not null;

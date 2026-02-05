@@ -1,0 +1,80 @@
+using System.Globalization;
+using System.Text.RegularExpressions;
+using GifMaker.Core;
+
+namespace GifMaker.Screenshot;
+
+/// <summary>
+/// Gets geometry of the currently focused window using xdotool.
+/// </summary>
+public sealed partial class WindowGeometry
+{
+    private readonly IProcessRunner _processRunner;
+
+    // Match xdotool getwindowgeometry output:
+    // Window 12345678
+    //   Position: 100,200 (screen: 0)
+    //   Geometry: 800x600
+    [GeneratedRegex(@"Position:\s*(\d+),(\d+)")]
+    private static partial Regex PositionRegex();
+
+    [GeneratedRegex(@"Geometry:\s*(\d+)x(\d+)")]
+    private static partial Regex GeometryRegex();
+
+    /// <summary>
+    /// Creates WindowGeometry with default process runner.
+    /// </summary>
+    public WindowGeometry() : this(ProcessRunner.Default) { }
+
+    /// <summary>
+    /// Creates WindowGeometry with custom process runner (for testing).
+    /// </summary>
+    public WindowGeometry(IProcessRunner processRunner)
+    {
+        ArgumentNullException.ThrowIfNull(processRunner);
+        _processRunner = processRunner;
+    }
+
+    /// <summary>
+    /// Gets the geometry of the currently focused window.
+    /// </summary>
+    /// <returns>Rectangle of the focused window, or error if unavailable.</returns>
+    public async Task<Result<Rectangle>> GetActiveWindowAsync(CancellationToken ct = default)
+    {
+        // Get active window ID
+        var idResult = await _processRunner.RunAsync(
+            "xdotool", ["getactivewindow"], ct).ConfigureAwait(false);
+
+        if (idResult.ExitCode != 0)
+            return Result<Rectangle>.Fail("Failed to get active window (is xdotool installed?)");
+
+        var windowId = idResult.StandardOutput.Trim();
+        if (string.IsNullOrEmpty(windowId))
+            return Result<Rectangle>.Fail("No active window found");
+
+        // Get window geometry
+        var geoResult = await _processRunner.RunAsync(
+            "xdotool", ["getwindowgeometry", windowId], ct).ConfigureAwait(false);
+
+        if (geoResult.ExitCode != 0)
+            return Result<Rectangle>.Fail($"Failed to get window geometry: {geoResult.StandardError}");
+
+        return ParseGeometry(geoResult.StandardOutput);
+    }
+
+    private static Result<Rectangle> ParseGeometry(string output)
+    {
+        var posMatch = PositionRegex().Match(output);
+        var geoMatch = GeometryRegex().Match(output);
+
+        if (!posMatch.Success || !geoMatch.Success)
+            return Result<Rectangle>.Fail($"Failed to parse window geometry: {output}");
+
+        var x = int.Parse(posMatch.Groups[1].Value, CultureInfo.InvariantCulture);
+        var y = int.Parse(posMatch.Groups[2].Value, CultureInfo.InvariantCulture);
+        var width = int.Parse(geoMatch.Groups[1].Value, CultureInfo.InvariantCulture);
+        var height = int.Parse(geoMatch.Groups[2].Value, CultureInfo.InvariantCulture);
+
+        return Rectangle.CreateValidated(x, y, width, height, "Window has zero area");
+    }
+}

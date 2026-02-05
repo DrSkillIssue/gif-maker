@@ -14,7 +14,7 @@ public readonly record struct Rectangle(int X, int Y, int Width, int Height)
     /// Whether this rectangle has positive dimensions (non-zero area).
     /// </summary>
     public bool IsValid => Width > 0 && Height > 0;
-    
+
     /// <summary>
     /// Creates a rectangle from two corner points, normalizing to ensure positive dimensions.
     /// </summary>
@@ -30,5 +30,20 @@ public readonly record struct Rectangle(int X, int Y, int Width, int Height)
         var width = Math.Abs(x2 - x1);
         var height = Math.Abs(y2 - y1);
         return new Rectangle(x, y, width, height);
+    }
+
+    /// <summary>
+    /// Creates a validated rectangle, returning error if dimensions are invalid.
+    /// </summary>
+    /// <param name="x">X coordinate.</param>
+    /// <param name="y">Y coordinate.</param>
+    /// <param name="width">Width in pixels.</param>
+    /// <param name="height">Height in pixels.</param>
+    /// <param name="errorMessage">Error message if validation fails.</param>
+    /// <returns>Result with rectangle on success, error on failure.</returns>
+    public static Result<Rectangle> CreateValidated(int x, int y, int width, int height, string errorMessage)
+    {
+        var rect = new Rectangle(x, y, width, height);
+        return rect.IsValid ? Result<Rectangle>.Ok(rect) : Result<Rectangle>.Fail(errorMessage);
     }
 }

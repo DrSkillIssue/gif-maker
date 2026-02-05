@@ -16,7 +16,7 @@ public static class WindowPositioner
     /// Screen dimensions from X11.
     /// </summary>
     public readonly record struct ScreenBounds(int Width, int Height);
-    
+
     /// <summary>
     /// Gets screen dimensions.
     /// </summary>
@@ -24,16 +24,16 @@ public static class WindowPositioner
     public static ScreenBounds? GetScreenBounds()
     {
         using var display = DisplayHandle.Open();
-        if (!display.IsValid) 
+        if (!display.IsValid)
             return null;
-        
+
         var screen = XDefaultScreen(display.Value);
         return new ScreenBounds(
             XDisplayWidth(display.Value, screen),
             XDisplayHeight(display.Value, screen)
         );
     }
-    
+
     /// <summary>
     /// Moves window by X11 window ID.
     /// </summary>
@@ -45,16 +45,16 @@ public static class WindowPositioner
     {
         if (xid == 0)
             return false;
-        
+
         using var display = DisplayHandle.Open();
-        if (!display.IsValid) 
+        if (!display.IsValid)
             return false;
-        
+
         XMoveWindowByXid(display.Value, xid, x, y);
         XSync(display.Value, discard: false);
         return true;
     }
-    
+
     /// <summary>
     /// Moves a GTK window to the specified position using X11.
     /// </summary>
@@ -67,7 +67,7 @@ public static class WindowPositioner
         var handle = surface.Handle.DangerousGetHandle();
         if (handle == nint.Zero)
             return false;
-        
+
         var xid = GdkX11SurfaceGetXid(handle);
         return TryMove(xid, x, y);
     }

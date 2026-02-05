@@ -12,15 +12,15 @@ public sealed partial class AreaSelector : IDisposable
 {
     private readonly IProcessRunner _processRunner;
     private int _disposed;
-    
+
     [GeneratedRegex(@"(\d+)x(\d+)\+(\d+)\+(\d+)")]
     private static partial Regex GeometryRegex();
-    
+
     /// <summary>
     /// Creates an AreaSelector with default process runner.
     /// </summary>
     public AreaSelector() : this(ProcessRunner.Default) { }
-    
+
     /// <summary>
     /// Creates an AreaSelector with custom process runner (for testing).
     /// </summary>
@@ -29,7 +29,7 @@ public sealed partial class AreaSelector : IDisposable
         ArgumentNullException.ThrowIfNull(processRunner);
         _processRunner = processRunner;
     }
-    
+
     /// <summary>
     /// Blocks until user selects a region or cancels.
     /// </summary>
@@ -37,10 +37,10 @@ public sealed partial class AreaSelector : IDisposable
     public async Task<Result<Rectangle>> SelectAsync(CancellationToken ct = default)
     {
         ThrowIfDisposed();
-        
+
         // -f: format, -b: border width, -c: color (RGBA), -l: classic XP style
         string[] args = ["-f", "%wx%h+%x+%y", "-b", "4", "-c", "1,0.2,0.2,0.8", "-l"];
-        
+
         ProcessResult result;
         try
         {
@@ -50,35 +50,32 @@ public sealed partial class AreaSelector : IDisposable
         {
             return Result<Rectangle>.Fail($"Failed to start slop: {ex.Message}");
         }
-        
+
         // Exit code 1 = cancelled (Escape pressed)
         if (result.ExitCode == 1)
             return Result<Rectangle>.Fail("Selection cancelled");
-        
+
         if (result.ExitCode != 0)
             return Result<Rectangle>.Fail($"slop failed with exit code {result.ExitCode}: {result.StandardError}");
-        
+
         if (string.IsNullOrWhiteSpace(result.StandardOutput))
             return Result<Rectangle>.Fail("slop produced no output");
-        
+
         // Parse output: WxH+X+Y (e.g., "640x480+100+200")
         var match = GeometryRegex().Match(result.StandardOutput);
         if (!match.Success)
             return Result<Rectangle>.Fail($"Invalid slop output format: {result.StandardOutput}");
-        
+
         var width = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
         var height = int.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture);
         var x = int.Parse(match.Groups[3].Value, CultureInfo.InvariantCulture);
         var y = int.Parse(match.Groups[4].Value, CultureInfo.InvariantCulture);
-        
-        var rect = new Rectangle(x, y, width, height);
-        return rect.IsValid 
-            ? Result<Rectangle>.Ok(rect) 
-            : Result<Rectangle>.Fail("Selected region has zero area");
+
+        return Rectangle.CreateValidated(x, y, width, height, "Selected region has zero area");
     }
-    
+
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed != 0, this);
-    
+
     /// <summary>
     /// Disposes the area selector.
     /// </summary>
