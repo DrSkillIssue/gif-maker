@@ -2,7 +2,8 @@ using System.Buffers;
 using System.Diagnostics;
 using System.Text;
 using GifMaker.Core;
-using Microsoft.Extensions.ObjectPool;
+using IFFmpegProcess = GifMaker.Core.IFFmpegProcess;
+
 
 namespace GifMaker.Conversion;
 
@@ -10,7 +11,7 @@ namespace GifMaker.Conversion;
 /// Converts recorded video to various output formats using FFmpeg.
 /// Thread-safe, cancellable, with proper resource cleanup.
 /// </summary>
-public sealed class FFmpegConverter(IFFmpegProcessFactory? processFactory = null)
+public sealed class FFmpegConverter(IFFmpegProcessFactory<IFFmpegProcess>? processFactory = null)
 {
     /// <summary>Default timeout for FFmpeg operations.</summary>
     public static readonly TimeSpan DefaultTimeout = TimeSpan.FromMinutes(30);
@@ -21,7 +22,7 @@ public sealed class FFmpegConverter(IFFmpegProcessFactory? processFactory = null
     private const int MaxFps = 120;
     private const int CharBufferSize = 4096;
 
-    private readonly IFFmpegProcessFactory _processFactory = processFactory ?? FFmpegProcessFactory.Default;
+    private readonly IFFmpegProcessFactory<IFFmpegProcess> _processFactory = processFactory ?? Core.FFmpegConversionProcessFactory.Default;
 
     /// <summary>Timeout for FFmpeg operations.</summary>
     public TimeSpan Timeout
@@ -82,13 +83,8 @@ public sealed class FFmpegConverter(IFFmpegProcessFactory? processFactory = null
         public static ConversionSettings CreateOrThrow(
             OutputFormat format,
             int fps = 30,
-            int width = 0)
-        {
-            var result = Create(format, fps, width);
-            return result.Match(
-                settings => settings,
-                error => throw new ArgumentException(error, nameof(ConversionSettings)));
-        }
+            int width = 0) =>
+            Create(format, fps, width).GetValueOrThrow();
 
         public bool Equals(ConversionSettings other) =>
             Format == other.Format && Fps == other.Fps && Width == other.Width;
@@ -127,7 +123,7 @@ public sealed class FFmpegConverter(IFFmpegProcessFactory? processFactory = null
     {
         ValidateInputs(sourcePath, destPath);
 
-        var args = new ArgumentList();
+        var args = new FFmpegArgumentList();
         BuildArgumentList(ref args, sourcePath, destPath, settings);
         using var process = _processFactory.Create(args.AsSpan());
         var stderr = await RunFFmpegAsync(process, progress, ct).ConfigureAwait(false);
@@ -158,7 +154,7 @@ public sealed class FFmpegConverter(IFFmpegProcessFactory? processFactory = null
     /// Builds FFmpeg argument list. Arguments stored in stack-allocated inline array.
     /// </summary>
     private static void BuildArgumentList(
-        ref ArgumentList args,
+        ref FFmpegArgumentList args,
         string source,
         string dest,
         ConversionSettings settings)
@@ -180,7 +176,7 @@ public sealed class FFmpegConverter(IFFmpegProcessFactory? processFactory = null
     }
 
     private static void BuildGifArgs(
-        ref ArgumentList args,
+        ref FFmpegArgumentList args,
         string source,
         string dest,
         int fps,
@@ -244,7 +240,7 @@ public sealed class FFmpegConverter(IFFmpegProcessFactory? processFactory = null
     }
 
     private static void BuildMp4Args(
-        ref ArgumentList args,
+        ref FFmpegArgumentList args,
         string source,
         string dest,
         int fps,
@@ -276,7 +272,7 @@ public sealed class FFmpegConverter(IFFmpegProcessFactory? processFactory = null
     }
 
     private static void BuildWebMArgs(
-        ref ArgumentList args,
+        ref FFmpegArgumentList args,
         string source,
         string dest,
         int fps,
@@ -335,7 +331,7 @@ public sealed class FFmpegConverter(IFFmpegProcessFactory? processFactory = null
         IProgress<ConversionProgress>? progress,
         CancellationToken ct)
     {
-        var stderrBuilder = StringBuilderPool.Shared.Get();
+        var stderrBuilder = Pools.StringBuilder.Get();
         var startTime = Stopwatch.GetTimestamp();
 
         // Single CTS with timeout, linked to user token
@@ -364,13 +360,13 @@ public sealed class FFmpegConverter(IFFmpegProcessFactory? processFactory = null
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                await KillProcessSafelyAsync(process).ConfigureAwait(false);
+                await process.KillSafelyAsync().ConfigureAwait(false);
                 throw new TimeoutException(
                     $"FFmpeg conversion timed out after {Timeout.TotalMinutes:F1} minutes. Stderr: {stderrBuilder}");
             }
             catch (OperationCanceledException)
             {
-                await KillProcessSafelyAsync(process).ConfigureAwait(false);
+                await process.KillSafelyAsync().ConfigureAwait(false);
                 throw;
             }
 
@@ -385,7 +381,7 @@ public sealed class FFmpegConverter(IFFmpegProcessFactory? processFactory = null
         }
         finally
         {
-            StringBuilderPool.Shared.Return(stderrBuilder);
+            Pools.StringBuilder.Return(stderrBuilder);
         }
     }
 
@@ -446,36 +442,6 @@ public sealed class FFmpegConverter(IFFmpegProcessFactory? processFactory = null
         return lastNewline >= 0 ? span[(lastNewline + 1)..].ToString() : span.ToString();
     }
 
-    private static async Task KillProcessSafelyAsync(IFFmpegProcess process)
-    {
-        try
-        {
-            process.Kill(entireProcessTree: true);
-            await process.WaitForExitAsync(CancellationToken.None)
-                .WaitAsync(TimeSpan.FromSeconds(5))
-                .ConfigureAwait(false);
-        }
-        catch (InvalidOperationException)
-        {
-            // Process already exited
-        }
-        catch (TimeoutException)
-        {
-            // Process didn't exit in time after kill
-        }
-        catch (SystemException)
-        {
-            // Various system-level errors during kill
-        }
-    }
 }
 
-/// <summary>
-/// Pooled StringBuilder for stderr accumulation.
-/// </summary>
-file static class StringBuilderPool
-{
-    public static readonly ObjectPool<StringBuilder> Shared =
-        new DefaultObjectPoolProvider { MaximumRetained = Environment.ProcessorCount * 2 }
-            .CreateStringBuilderPool(initialCapacity: 4096, maximumRetainedCapacity: 64 * 1024);
-}
+

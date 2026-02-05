@@ -1,5 +1,5 @@
 using System.Runtime.Versioning;
-
+using GifMaker.Core;
 using static GifMaker.X11.X11Interop;
 
 namespace GifMaker.X11;
@@ -16,33 +16,8 @@ namespace GifMaker.X11;
 public sealed class CursorOverlay : IDisposable
 {
     // Standard arrow cursor dimensions (matches X11 left_ptr)
-    private const int CursorWidth = 11;
-    private const int CursorHeight = 18;
-
-    // Arrow cursor pixel data: each row's width from tip down
-    // Standard pointer: grows 1px/row, then has notch for tail
-    // Row widths: tip=1, then diagonal edge grows, notch at row 11-12, tail narrows
-    private static ReadOnlySpan<int> RowWidths =>
-    [
-        1,  // row 0: tip
-        2,  // row 1
-        3,  // row 2
-        4,  // row 3
-        5,  // row 4
-        6,  // row 5
-        7,  // row 6
-        8,  // row 7
-        9,  // row 8
-        10, // row 9
-        11, // row 10: widest
-        6,  // row 11: notch (tail starts)
-        7,  // row 12
-        4,  // row 13: tail
-        3,  // row 14
-        2,  // row 15
-        2,  // row 16
-        1,  // row 17: tail end
-    ];
+    private const int CursorWidth = CursorShape.Width;
+    private const int CursorHeight = CursorShape.Height;
 
     private readonly nint _display;
     private readonly nint _window;
@@ -119,7 +94,7 @@ public sealed class CursorOverlay : IDisposable
         }
 
         // Make window stay on top and be non-interactive
-        SetWindowProperties(window);
+        SetOverlayWindowProperties(_display, window);
 
         return (window, shapeMask, gc);
     }
@@ -137,7 +112,7 @@ public sealed class CursorOverlay : IDisposable
         // Draw cursor shape as 1 (visible)
         XSetForeground(_display, gc, 1);
 
-        var rowWidths = RowWidths;
+        var rowWidths = CursorShape.RowWidths;
         for (var row = 0; row < rowWidths.Length && row < CursorHeight; row++)
         {
             var width = rowWidths[row];
@@ -152,7 +127,7 @@ public sealed class CursorOverlay : IDisposable
     /// </summary>
     private void DrawCursor(nint window, nint gc, nint blackPixel, nint whitePixel)
     {
-        var rowWidths = RowWidths;
+        var rowWidths = CursorShape.RowWidths;
 
         // Fill entire cursor shape with white first
         XSetForeground(_display, gc, whitePixel);
@@ -187,29 +162,14 @@ public sealed class CursorOverlay : IDisposable
         XFlush(_display);
     }
 
-    private void SetWindowProperties(nint window)
-    {
-        // _NET_WM_WINDOW_TYPE_DOCK makes it stay on top
-        var typeAtom = XInternAtom(_display, "_NET_WM_WINDOW_TYPE", false);
-        var dockAtom = XInternAtom(_display, "_NET_WM_WINDOW_TYPE_DOCK", false);
-        XChangeProperty(_display, window, typeAtom, XA_ATOM, 32, PropModeReplace, ref dockAtom, 1);
-
-        // _NET_WM_STATE_ABOVE
-        var stateAtom = XInternAtom(_display, "_NET_WM_STATE", false);
-        var aboveAtom = XInternAtom(_display, "_NET_WM_STATE_ABOVE", false);
-        XChangeProperty(_display, window, stateAtom, XA_ATOM, 32, PropModeReplace, ref aboveAtom, 1);
-    }
-
     /// <summary>
     /// Shows the cursor overlay.
     /// </summary>
     /// <exception cref="ObjectDisposedException">The overlay has been disposed.</exception>
     public void Show()
     {
-        ObjectDisposedException.ThrowIf(_disposed != 0, this);
-        XMapWindow(_display, _window);
-        XRaiseWindow(_display, _window);
-        XFlush(_display);
+        ThrowIfDisposed();
+        ShowWindow(_display, _window);
     }
 
     /// <summary>
@@ -218,10 +178,11 @@ public sealed class CursorOverlay : IDisposable
     /// <exception cref="ObjectDisposedException">The overlay has been disposed.</exception>
     public void Hide()
     {
-        ObjectDisposedException.ThrowIf(_disposed != 0, this);
-        XUnmapWindow(_display, _window);
-        XFlush(_display);
+        ThrowIfDisposed();
+        HideWindow(_display, _window);
     }
+
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed != 0, this);
 
     /// <summary>
     /// Disposes the overlay and releases X11 resources.
@@ -231,9 +192,6 @@ public sealed class CursorOverlay : IDisposable
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
 
-        try { if (_gc != nint.Zero) XFreeGC(_display, _gc); } catch { /* ignore */ }
-        try { if (_shapeMask != nint.Zero) XFreePixmap(_display, _shapeMask); } catch { /* ignore */ }
-        try { if (_window != nint.Zero) XDestroyWindow(_display, _window); } catch { /* ignore */ }
-        try { if (_display != nint.Zero) XCloseDisplay(_display); } catch { /* ignore */ }
+        DisposeX11Resources(_display, _window, _shapeMask, _gc);
     }
 }

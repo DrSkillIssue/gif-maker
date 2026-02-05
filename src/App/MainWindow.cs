@@ -18,7 +18,7 @@ public sealed class MainWindow : Window
     private const int WindowHeight = 350;
 
     private readonly Application _app;
-    private readonly ILogger _logger;
+    private readonly ILogger<MainWindow> _logger;
     private readonly IProcessRunner _processRunner;
 
     private readonly Stack _stack;
@@ -32,7 +32,7 @@ public sealed class MainWindow : Window
     /// </summary>
     public MainWindow(
         Application app,
-        ILogger? logger = null,
+        ILogger<MainWindow>? logger = null,
         IProcessRunner? processRunner = null)
     {
         _app = app;
@@ -56,9 +56,9 @@ public sealed class MainWindow : Window
         _stack.SetTransitionDuration(200);
         stackSwitcher.SetStack(_stack);
 
-        // Create pages
-        _recordPage = new RecordPage(_logger, _processRunner);
-        _screenshotPage = new ScreenshotPage(_logger, _processRunner);
+        // Create pages (each manages its own typed logger)
+        _recordPage = new RecordPage(logger: null, _processRunner);
+        _screenshotPage = new ScreenshotPage(logger: null, _processRunner);
 
         _stack.AddTitled(_recordPage, "record", "Record");
         _stack.AddTitled(_screenshotPage, "screenshot", "Screenshot");

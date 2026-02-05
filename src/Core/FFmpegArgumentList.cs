@@ -1,20 +1,20 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 
-namespace GifMaker.Recording;
+namespace GifMaker.Core;
 
 /// <summary>
-/// Fixed-size inline array for FFmpeg recording command arguments.
+/// Fixed-size inline array for FFmpeg command arguments.
 /// </summary>
 /// <remarks>
 /// Uses C# 12 <see cref="InlineArrayAttribute"/> for stack allocation.
-/// Capacity of 18 covers all FFmpeg recording arguments with headroom.
+/// Capacity of 24 covers all FFmpeg recording/conversion arguments with headroom.
 /// </remarks>
 [InlineArray(Capacity)]
-internal struct RecordingArgumentStorage
+internal struct FFmpegArgumentStorage
 {
     /// <summary>Maximum number of arguments supported.</summary>
-    internal const int Capacity = 18;
+    internal const int Capacity = 24;
 
     private string _element;
 }
@@ -24,18 +24,18 @@ internal struct RecordingArgumentStorage
 /// </summary>
 /// <remarks>
 /// <para>
-/// Backed by <see cref="RecordingArgumentStorage"/> inline array.
+/// Backed by <see cref="FFmpegArgumentStorage"/> inline array.
 /// All operations are O(1) with no GC pressure in steady state.
 /// </para>
 /// <para>
-/// Typical FFmpeg recording command uses ~17 arguments:
-/// -y -f x11grab -framerate {fps} -video_size {WxH} -i {display+x,y}
-/// -c:v libx264 -preset ultrafast -crf 18 -pix_fmt yuv420p {output}
+/// Typical usage:
+/// - Recording: ~17 args (-y -f x11grab -framerate {fps} -video_size {WxH} ...)
+/// - Conversion: ~18 args for MP4/WebM with scaling
 /// </para>
 /// </remarks>
-internal ref struct RecordingArgumentList
+public ref struct FFmpegArgumentList
 {
-    private RecordingArgumentStorage _storage;
+    private FFmpegArgumentStorage _storage;
     private int _count;
 
     /// <summary>Adds an argument to the list.</summary>
@@ -43,7 +43,7 @@ internal ref struct RecordingArgumentList
     /// <exception cref="InvalidOperationException">Capacity exceeded.</exception>
     public void Add(string arg)
     {
-        if (_count >= RecordingArgumentStorage.Capacity)
+        if (_count >= FFmpegArgumentStorage.Capacity)
             ThrowOverflow();
         _storage[_count++] = arg;
     }
@@ -56,5 +56,5 @@ internal ref struct RecordingArgumentList
     [DoesNotReturn]
     private static void ThrowOverflow() =>
         throw new InvalidOperationException(
-            $"Argument buffer overflow - max {RecordingArgumentStorage.Capacity} arguments supported");
+            $"FFmpeg argument buffer overflow - max {FFmpegArgumentStorage.Capacity} arguments supported");
 }

@@ -76,7 +76,7 @@ public sealed class ScreenshotCapture
             if (region.Width < MinDimension || region.Height < MinDimension)
                 return Result<CaptureSettings>.Fail($"Region too small (min {MinDimension}x{MinDimension})");
 
-            var resolvedDisplay = display ?? Environment.GetEnvironmentVariable("DISPLAY") ?? ":0";
+            var resolvedDisplay = X11Display.Resolve(display);
             return Result<CaptureSettings>.Ok(new CaptureSettings(region, resolvedDisplay, showPointer, fixedCursorPosition));
         }
 
@@ -87,12 +87,8 @@ public sealed class ScreenshotCapture
             Rectangle region,
             bool showPointer = false,
             string? display = null,
-            (int X, int Y)? fixedCursorPosition = null)
-        {
-            return Create(region, showPointer, display, fixedCursorPosition).Match(
-                s => s,
-                error => throw new ArgumentException(error));
-        }
+            (int X, int Y)? fixedCursorPosition = null) =>
+            Create(region, showPointer, display, fixedCursorPosition).GetValueOrThrow();
     }
 
     /// <summary>
@@ -220,30 +216,7 @@ public sealed class ScreenshotCapture
     /// </remarks>
     private static string BuildCursorFilter(int x, int y)
     {
-        // Arrow cursor row widths (pixels per row from tip to tail)
-        // Standard pointer: grows 1px/row, then has notch for tail
-        ReadOnlySpan<int> rowWidths =
-        [
-            1,  // row 0: tip
-            2,  // row 1
-            3,  // row 2
-            4,  // row 3
-            5,  // row 4
-            6,  // row 5
-            7,  // row 6
-            8,  // row 7
-            9,  // row 8
-            10, // row 9
-            11, // row 10: widest
-            6,  // row 11: notch (tail starts)
-            7,  // row 12
-            4,  // row 13: tail
-            3,  // row 14
-            2,  // row 15
-            2,  // row 16
-            1,  // row 17: tail end
-        ];
-
+        var rowWidths = CursorShape.RowWidths;
         var filters = new List<string>(rowWidths.Length * 3 + 4);
 
         // Draw cursor row by row: black outline with white fill

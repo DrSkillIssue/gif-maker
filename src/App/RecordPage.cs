@@ -65,7 +65,7 @@ public sealed class RecordPage : Box
 
     #region Fields
 
-    private readonly ILogger _logger;
+    private readonly ILogger<RecordPage> _logger;
     private readonly IProcessRunner _processRunner;
 
     private readonly Label _statusLabel;
@@ -85,7 +85,7 @@ public sealed class RecordPage : Box
     #endregion
 
     public RecordPage(
-        ILogger? logger = null,
+        ILogger<RecordPage>? logger = null,
         IProcessRunner? processRunner = null)
     {
         _logger = logger ?? NullLogger<RecordPage>.Instance;

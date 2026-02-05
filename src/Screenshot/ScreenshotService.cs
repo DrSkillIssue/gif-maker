@@ -12,7 +12,7 @@ namespace GifMaker.Screenshot;
 [SupportedOSPlatform("linux")]
 public sealed class ScreenshotService
 {
-    private readonly ILogger _logger;
+    private readonly ILogger<ScreenshotService> _logger;
     private readonly IProcessRunner _processRunner;
     private readonly ScreenshotCapture _capture;
     private readonly WindowGeometry _windowGeometry;
@@ -29,7 +29,7 @@ public sealed class ScreenshotService
     /// Creates a ScreenshotService with optional dependencies.
     /// </summary>
     public ScreenshotService(
-        ILogger? logger = null,
+        ILogger<ScreenshotService>? logger = null,
         IProcessRunner? processRunner = null)
     {
         _logger = logger ?? NullLogger<ScreenshotService>.Instance;

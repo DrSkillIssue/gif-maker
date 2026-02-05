@@ -106,16 +106,16 @@ public sealed class TrayIcon : IDisposable
     }
 
     private void OnShowActivated(nint widget, nint userData) =>
-        GLib.Functions.IdleAdd(0, () => { ShowWindowRequested?.Invoke(); return false; });
+        UiThread.Run(() => ShowWindowRequested?.Invoke());
 
     private void OnScreenshotActivated(nint widget, nint userData) =>
-        GLib.Functions.IdleAdd(0, () => { ScreenshotRequested?.Invoke(); return false; });
+        UiThread.Run(() => ScreenshotRequested?.Invoke());
 
     private void OnRecordActivated(nint widget, nint userData) =>
-        GLib.Functions.IdleAdd(0, () => { RecordRequested?.Invoke(); return false; });
+        UiThread.Run(() => RecordRequested?.Invoke());
 
     private void OnQuitActivated(nint widget, nint userData) =>
-        GLib.Functions.IdleAdd(0, () => { QuitRequested?.Invoke(); return false; });
+        UiThread.Run(() => QuitRequested?.Invoke());
 
     /// <summary>
     /// Sets the tray icon to indicate recording is in progress.

@@ -87,7 +87,7 @@ public sealed class GifMakerApp : IDisposable
             // Create or show main window
             if (_mainWindow is null)
             {
-                _mainWindow = new MainWindow(_app, _logger);
+                _mainWindow = new MainWindow(_app, logger: null);
                 // Override close behavior: minimize to tray if tray available
                 _mainWindow.OnCloseRequest += OnWindowCloseRequest;
             }

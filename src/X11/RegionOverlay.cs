@@ -90,20 +90,7 @@ public sealed class RegionOverlay : IDisposable
         XShapeCombineMask(_display, _window, ShapeBounding, 0, 0, _shapeMask, ShapeSet);
 
         // Make window click-through and stay on top
-        SetWindowProperties();
-    }
-
-    private void SetWindowProperties()
-    {
-        // _NET_WM_WINDOW_TYPE_DOCK makes it stay on top
-        var typeAtom = XInternAtom(_display, "_NET_WM_WINDOW_TYPE", false);
-        var dockAtom = XInternAtom(_display, "_NET_WM_WINDOW_TYPE_DOCK", false);
-        XChangeProperty(_display, _window, typeAtom, XA_ATOM, 32, PropModeReplace, ref dockAtom, 1);
-
-        // _NET_WM_STATE_ABOVE
-        var stateAtom = XInternAtom(_display, "_NET_WM_STATE", false);
-        var aboveAtom = XInternAtom(_display, "_NET_WM_STATE_ABOVE", false);
-        XChangeProperty(_display, _window, stateAtom, XA_ATOM, 32, PropModeReplace, ref aboveAtom, 1);
+        SetOverlayWindowProperties(_display, _window);
     }
 
     /// <summary>
@@ -113,9 +100,7 @@ public sealed class RegionOverlay : IDisposable
     public void Show()
     {
         if (_disposed != 0) return;
-        XMapWindow(_display, _window);
-        XRaiseWindow(_display, _window);
-        XFlush(_display);
+        ShowWindow(_display, _window);
     }
 
     /// <summary>
@@ -125,8 +110,7 @@ public sealed class RegionOverlay : IDisposable
     public void Hide()
     {
         if (_disposed != 0) return;
-        XUnmapWindow(_display, _window);
-        XFlush(_display);
+        HideWindow(_display, _window);
     }
 
     /// <summary>
@@ -137,11 +121,6 @@ public sealed class RegionOverlay : IDisposable
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
 
-        // Release resources in reverse order of creation.
-        // Each cleanup is wrapped to ensure all resources are freed even if one fails.
-        try { if (_gc != nint.Zero) XFreeGC(_display, _gc); } catch { /* ignore */ }
-        try { if (_shapeMask != nint.Zero) XFreePixmap(_display, _shapeMask); } catch { /* ignore */ }
-        try { if (_window != nint.Zero) XDestroyWindow(_display, _window); } catch { /* ignore */ }
-        try { if (_display != nint.Zero) XCloseDisplay(_display); } catch { /* ignore */ }
+        DisposeX11Resources(_display, _window, _shapeMask, _gc);
     }
 }

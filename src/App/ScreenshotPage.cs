@@ -46,7 +46,7 @@ public sealed class ScreenshotPage : Box
 
     #region Fields
 
-    private readonly ILogger _logger;
+    private readonly ILogger<ScreenshotPage> _logger;
     private readonly IProcessRunner _processRunner;
     private readonly ScreenshotService _screenshotService;
 
@@ -70,12 +70,12 @@ public sealed class ScreenshotPage : Box
     #endregion
 
     public ScreenshotPage(
-        ILogger? logger = null,
+        ILogger<ScreenshotPage>? logger = null,
         IProcessRunner? processRunner = null)
     {
         _logger = logger ?? NullLogger<ScreenshotPage>.Instance;
         _processRunner = processRunner ?? ProcessRunner.Default;
-        _screenshotService = new ScreenshotService(_logger, _processRunner);
+        _screenshotService = new ScreenshotService(logger: null, _processRunner);
 
         SetOrientation(Orientation.Vertical);
         SetSpacing(12);

@@ -325,6 +325,58 @@ internal static partial class X11Interop
     internal const nint BorderColorRed = 0xFF3333;
 
     #endregion
+
+    #region Helper Methods
+
+    /// <summary>
+    /// Makes a window stay on top and be non-interactive (dock-like behavior).
+    /// </summary>
+    /// <param name="display">X11 display.</param>
+    /// <param name="window">Window to configure.</param>
+    internal static void SetOverlayWindowProperties(nint display, nint window)
+    {
+        // _NET_WM_WINDOW_TYPE_DOCK makes it stay on top
+        var typeAtom = XInternAtom(display, "_NET_WM_WINDOW_TYPE", false);
+        var dockAtom = XInternAtom(display, "_NET_WM_WINDOW_TYPE_DOCK", false);
+        XChangeProperty(display, window, typeAtom, XA_ATOM, 32, PropModeReplace, ref dockAtom, 1);
+
+        // _NET_WM_STATE_ABOVE
+        var stateAtom = XInternAtom(display, "_NET_WM_STATE", false);
+        var aboveAtom = XInternAtom(display, "_NET_WM_STATE_ABOVE", false);
+        XChangeProperty(display, window, stateAtom, XA_ATOM, 32, PropModeReplace, ref aboveAtom, 1);
+    }
+
+    /// <summary>
+    /// Shows a window (maps it to screen and raises it).
+    /// </summary>
+    internal static void ShowWindow(nint display, nint window)
+    {
+        XMapWindow(display, window);
+        XRaiseWindow(display, window);
+        XFlush(display);
+    }
+
+    /// <summary>
+    /// Hides a window (unmaps it from screen).
+    /// </summary>
+    internal static void HideWindow(nint display, nint window)
+    {
+        XUnmapWindow(display, window);
+        XFlush(display);
+    }
+
+    /// <summary>
+    /// Safely disposes X11 resources in order.
+    /// </summary>
+    internal static void DisposeX11Resources(nint display, nint window, nint shapeMask, nint gc)
+    {
+        try { if (gc != nint.Zero) XFreeGC(display, gc); } catch { /* ignore */ }
+        try { if (shapeMask != nint.Zero) XFreePixmap(display, shapeMask); } catch { /* ignore */ }
+        try { if (window != nint.Zero) XDestroyWindow(display, window); } catch { /* ignore */ }
+        try { if (display != nint.Zero) XCloseDisplay(display); } catch { /* ignore */ }
+    }
+
+    #endregion
 }
 
 #region X11 Event Structures

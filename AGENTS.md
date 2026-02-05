@@ -35,9 +35,11 @@ No `.editorconfig` yet. Nullable reference types enforced via csproj.
 ```
 src/
   App/        # GTK application, UI windows
+  Cli/        # Command-line interface
   Core/       # Domain primitives: Result<T>, Rectangle, interfaces
   Recording/  # FFmpeg x11grab recording
   Conversion/ # FFmpeg format conversion (GIF/MP4/WebM)
+  Screenshot/ # FFmpeg screenshot capture
   X11/        # P/Invoke, native interop
 ```
 
