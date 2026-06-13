@@ -18,7 +18,7 @@ public sealed class RecordingSession : IAsyncDisposable
     private readonly Func<FFmpegConverter> _createConverter;
 
     private ScreenRegion? _region;
-    private RegionOverlay? _overlay;
+    private ScreenOverlay? _overlay;
     private FFmpegRecorder? _recorder;
     private int? _fps;
     private CancellationTokenSource? _conversionCts;
@@ -46,24 +46,40 @@ public sealed class RecordingSession : IAsyncDisposable
         using var hiddenWindow = visibility;
         await Task.Delay(WindowHideDelayMs, ct);
 
-        using var selector = new AreaSelector(_processRunner);
+        var selector = new SlopScreenRegionSelector(_processRunner);
         var selection = await selector.SelectAsync(ct);
 
         return selection.Match(
             region =>
             {
-                var overlay = new RegionOverlay(region, OverlayBorderWidth);
-                overlay.Show();
+                var overlayResult = ScreenOverlay.CreateRegionFrame(
+                    region,
+                    new OverlayBorder(OverlayBorderWidth, 0xFF3333));
+                if (!overlayResult.IsSuccess)
+                    return overlayResult.Match(
+                        _ => throw new InvalidOperationException("Unreachable result state"),
+                        Result<RecordViewState>.Fail);
+
+                var overlay = overlayResult.GetValueOrThrow();
+                var showResult = overlay.Show();
+                if (!showResult.IsSuccess)
+                {
+                    overlay.Dispose();
+                    return showResult.Match(
+                        () => throw new InvalidOperationException("Unreachable result state"),
+                        Result<RecordViewState>.Fail);
+                }
+
                 _region = region;
                 _overlay = overlay;
                 return Result<RecordViewState>.Ok(new RecordViewState.Ready(region));
             },
             error =>
             {
-                if (error != "Selection cancelled")
+                if (error != SlopScreenRegionSelector.SelectionCancelled)
                     _logger.LogWarning("Selection failed: {Error}", error);
 
-                return error == "Selection cancelled"
+                return error == SlopScreenRegionSelector.SelectionCancelled
                     ? Result<RecordViewState>.Ok(new RecordViewState.Idle())
                     : Result<RecordViewState>.Fail(error);
             });
@@ -116,7 +132,9 @@ public sealed class RecordingSession : IAsyncDisposable
         {
             await recorder.StopAsync(ct);
             tempPath = recorder.TempPath;
-            overlay.Hide();
+            overlay.Hide().Match(
+                () => { },
+                error => _logger.LogWarning("Failed to hide recording overlay: {Error}", error));
 
             var outputPath = RecordingOutputPaths.GenerateRecordingPath(target.Format, target.OutputDirectory);
             var profile = ConversionProfile.Create(target.Format, fps).GetValueOrThrow();

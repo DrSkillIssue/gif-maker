@@ -23,12 +23,13 @@ public sealed class MainWindow : Window
     private readonly Stack _stack;
     private readonly RecordPage _recordPage;
     private readonly ScreenshotPage _screenshotPage;
+    private readonly X11Desktop _desktop = new();
 
     private RecordingSession? _recordingSession;
     private ScreenshotSession? _screenshotSession;
     private RecordViewState _recordState = new RecordViewState.Idle();
     private ScreenshotViewState _screenshotState = new ScreenshotViewState.Idle();
-    private (int X, int Y)? _savedPosition;
+    private ScreenPoint? _savedPosition;
 
     internal MainWindow(
         Application app,
@@ -87,9 +88,9 @@ public sealed class MainWindow : Window
         var surface = GetSurface();
         if (surface is not null)
         {
-            var position = WindowPositioner.GetWindowPosition(surface);
-            if (position.HasValue)
-                _savedPosition = position.Value;
+            _desktop.GetWindowLocation(surface).Match(
+                position => _savedPosition = position,
+                error => _logger.LogDebug("Failed to save window position: {Error}", error));
         }
 
         Hide();
@@ -293,7 +294,11 @@ public sealed class MainWindow : Window
         {
             var surface = GetSurface();
             if (surface is not null)
-                WindowPositioner.MoveWindow(surface, position.X, position.Y);
+            {
+                _desktop.MoveWindow(surface, position).Match(
+                    () => { },
+                    error => _logger.LogDebug("Failed to restore window position: {Error}", error));
+            }
         }
     }
 
@@ -301,16 +306,22 @@ public sealed class MainWindow : Window
     {
         OnShow -= OnWindowShown;
 
-        var bounds = WindowPositioner.GetScreenBounds();
-        if (bounds is not { } screen)
-            return;
+        _desktop.GetScreenSize().Match(
+            screen =>
+            {
+                var surface = GetSurface();
+                if (surface is null)
+                    return;
 
-        var x = (screen.Width - WindowWidth) / 2;
-        var y = (screen.Height - WindowHeight) / 2;
+                var point = new ScreenPoint(
+                    (screen.Width - WindowWidth) / 2,
+                    (screen.Height - WindowHeight) / 2);
 
-        var surface = GetSurface();
-        if (surface is not null)
-            WindowPositioner.MoveWindow(surface, x, y);
+                _desktop.MoveWindow(surface, point).Match(
+                    () => { },
+                    error => _logger.LogDebug("Failed to center window: {Error}", error));
+            },
+            error => _logger.LogDebug("Failed to read screen size: {Error}", error));
     }
 
     private void DisposeOwnedState()

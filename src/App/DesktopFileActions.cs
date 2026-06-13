@@ -3,7 +3,6 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using Gdk;
 using GifMaker.Core;
-using GifMaker.X11;
 using GLib;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -106,12 +105,12 @@ public sealed class DesktopFileActions
             providerHandles[providerCount++] = textProvider.Handle.DangerousGetHandle();
 
             var handleArray = providerHandles[..providerCount].ToArray();
-            var unionHandle = X11Interop.GdkContentProviderNewUnion(handleArray, (nuint)providerCount);
+            var unionHandle = GdkClipboardNative.GdkContentProviderNewUnion(handleArray, (nuint)providerCount);
 
             if (unionHandle == 0)
                 return Result<SavedMedia>.Fail("Failed to create content provider union");
 
-            var success = X11Interop.GdkClipboardSetContent(
+            var success = GdkClipboardNative.GdkClipboardSetContent(
                 clipboard.Handle.DangerousGetHandle(),
                 unionHandle);
 

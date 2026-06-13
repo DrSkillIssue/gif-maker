@@ -62,6 +62,7 @@ obj/Debug/net10.0/linux-x64/
 src/App/
  AppModels.cs
  DesktopFileActions.cs
+ GdkClipboardNative.cs
  GifMakerApp.cs
  GifMakerShell.cs
  MainWindow.cs
@@ -80,8 +81,10 @@ src/Conversion/
  RecordingOutputPaths.cs
 src/Core/
  IProcessRunner.cs
+ PointerGlyph.cs
  Pools.cs
  Result.cs
+ ScreenGeometry.cs
  ScreenRegion.cs
 src/
  Program.cs
@@ -95,15 +98,12 @@ src/
   ScreenshotModel.cs
   ScreenshotService.cs
  X11/
-  AreaSelector.cs
-  CursorOverlay.cs
-  CursorShape.cs
-  GlobalHotkey.cs
-  HotkeyAction.cs
-  RegionOverlay.cs
-  WindowPositioner.cs
+  SlopScreenRegionSelector.cs
+  X11Desktop.cs
   X11Display.cs
+  X11GlobalShortcutListener.cs
   X11Interop.cs
+  X11Overlay.cs
 
 [metadataReferences]
 <DOTNET>/packs/Microsoft.NETCore.App.Ref/10.0.5/ref/net10.0/

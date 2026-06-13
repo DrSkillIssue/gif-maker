@@ -120,7 +120,7 @@ public sealed class FFmpegRecorder : IAsyncDisposable, IDisposable
     /// <summary>
     /// Validated, immutable recording settings.
     /// </summary>
-    public readonly struct RecordingSettings : IEquatable<RecordingSettings>
+    public readonly struct RecordingSettings
     {
         /// <summary>Screen region to capture.</summary>
         public ScreenRegion Region { get; }
@@ -129,7 +129,7 @@ public sealed class FFmpegRecorder : IAsyncDisposable, IDisposable
         public int Fps { get; }
 
         /// <summary>X11 display identifier.</summary>
-        public string Display { get; }
+        public X11DisplayName Display { get; }
 
         /// <summary>Capture width (even, derived from region).</summary>
         public int CaptureWidth { get; }
@@ -137,7 +137,7 @@ public sealed class FFmpegRecorder : IAsyncDisposable, IDisposable
         /// <summary>Capture height (even, derived from region).</summary>
         public int CaptureHeight { get; }
 
-        private RecordingSettings(ScreenRegion region, int fps, string display)
+        private RecordingSettings(ScreenRegion region, int fps, X11DisplayName display)
         {
             Region = region;
             Fps = fps;
@@ -152,8 +152,7 @@ public sealed class FFmpegRecorder : IAsyncDisposable, IDisposable
         /// </summary>
         public static Result<RecordingSettings> Create(
             ScreenRegion region,
-            int fps = 30,
-            string? display = null)
+            int fps = 30)
         {
             if (region.Width < MinDimension || region.Height < MinDimension)
                 return Result<RecordingSettings>.Fail($"Region too small (min {MinDimension}x{MinDimension})");
@@ -161,21 +160,14 @@ public sealed class FFmpegRecorder : IAsyncDisposable, IDisposable
             if (fps is < MinFps or > MaxFps)
                 return Result<RecordingSettings>.Fail($"FPS must be between {MinFps} and {MaxFps}");
 
-            var resolvedDisplay = X11Display.Resolve(display);
+            var displayResult = X11DisplayName.Current();
+            if (!displayResult.IsSuccess)
+                return displayResult.Match(
+                    _ => throw new InvalidOperationException("Unreachable result state"),
+                    Result<RecordingSettings>.Fail);
 
-            return Result<RecordingSettings>.Ok(new RecordingSettings(region, fps, resolvedDisplay));
+            return Result<RecordingSettings>.Ok(new RecordingSettings(region, fps, displayResult.GetValueOrThrow()));
         }
-
-        public bool Equals(RecordingSettings other) =>
-            Region == other.Region && Fps == other.Fps && Display == other.Display;
-
-        public override bool Equals(object? obj) =>
-            obj is RecordingSettings other && Equals(other);
-
-        public override int GetHashCode() => HashCode.Combine(Region, Fps, Display);
-
-        public static bool operator ==(RecordingSettings left, RecordingSettings right) => left.Equals(right);
-        public static bool operator !=(RecordingSettings left, RecordingSettings right) => !left.Equals(right);
     }
 
     /// <summary>
@@ -194,7 +186,7 @@ public sealed class FFmpegRecorder : IAsyncDisposable, IDisposable
 
             _logger.LogDebug(
                 "Starting recording: {Width}x{Height} at {Fps}fps on {Display}",
-                settings.CaptureWidth, settings.CaptureHeight, settings.Fps, settings.Display);
+                settings.CaptureWidth, settings.CaptureHeight, settings.Fps, settings.Display.Value);
 
             var process = _processLauncher.StartInteractive(BuildCommand(settings, TempPath));
 
@@ -219,7 +211,7 @@ public sealed class FFmpegRecorder : IAsyncDisposable, IDisposable
                 "-video_size",
                 FormatVideoSize(settings.CaptureWidth, settings.CaptureHeight),
                 "-i",
-                FormatInput(settings.Display, settings.Region.X, settings.Region.Y),
+                settings.Display.FormatInput(settings.Region),
                 "-c:v",
                 "libx264",
                 "-preset",
@@ -232,9 +224,6 @@ public sealed class FFmpegRecorder : IAsyncDisposable, IDisposable
             ],
             ProcessIo.Interactive);
     }
-
-
-
     /// <summary>
     /// Formats video size string with minimal allocation.
     /// </summary>
@@ -251,29 +240,6 @@ public sealed class FFmpegRecorder : IAsyncDisposable, IDisposable
             state.width.TryFormat(span, out var wl);
             span[wl] = 'x';
             state.height.TryFormat(span[(wl + 1)..], out _);
-        });
-    }
-
-    /// <summary>
-    /// Formats input string for x11grab.
-    /// </summary>
-    private static string FormatInput(string display, int x, int y)
-    {
-        // "{display}+{x},{y}"
-        Span<char> xChars = stackalloc char[6]; // signed int
-        Span<char> yChars = stackalloc char[6];
-        x.TryFormat(xChars, out var xLen);
-        y.TryFormat(yChars, out var yLen);
-
-        return string.Create(display.Length + 1 + xLen + 1 + yLen, (display, x, y), static (span, state) =>
-        {
-            state.display.CopyTo(span);
-            var pos = state.display.Length;
-            span[pos++] = '+';
-            state.x.TryFormat(span[pos..], out var xl);
-            pos += xl;
-            span[pos++] = ',';
-            state.y.TryFormat(span[pos..], out _);
         });
     }
 

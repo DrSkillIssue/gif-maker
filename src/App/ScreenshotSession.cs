@@ -37,7 +37,7 @@ public sealed class ScreenshotSession
             if (!regionResult.IsSuccess)
                 return regionResult.Match(
                     _ => throw new InvalidOperationException("Unreachable result state"),
-                    error => error == "Selection cancelled"
+                    error => error == SlopScreenRegionSelector.SelectionCancelled
                         ? Result<ScreenshotViewState>.Ok(new ScreenshotViewState.Idle())
                         : Result<ScreenshotViewState>.Fail(error));
 
@@ -62,30 +62,53 @@ public sealed class ScreenshotSession
         CancellationToken ct)
     {
         using var hiddenWindow = visibility;
-        using var cursorOverlay = CreateCursorOverlay(pointer);
-
-        cursorOverlay?.Show();
-        await Task.Delay(WindowHideDelayMs, ct);
-
-        using var selector = new AreaSelector(_processRunner);
-        var selection = await selector.SelectAsync(ct);
-        cursorOverlay?.Hide();
-        return selection;
-    }
-
-    private CursorOverlay? CreateCursorOverlay(ScreenshotPointer pointer)
-    {
-        if (pointer is not ScreenshotPointer.FrozenAt frozen)
-            return null;
+        ScreenOverlay? cursorOverlay = null;
 
         try
         {
-            return new CursorOverlay(frozen.Position.X, frozen.Position.Y);
+            if (pointer is ScreenshotPointer.FrozenAt frozen)
+            {
+                var createResult = ScreenOverlay.CreateCursor(frozen.Position);
+                if (!createResult.IsSuccess)
+                {
+                    createResult.Match(
+                        _ => throw new InvalidOperationException("Unreachable result state"),
+                        error => _logger.LogWarning("Failed to create cursor overlay: {Error}", error));
+                }
+                else
+                {
+                    var overlay = createResult.GetValueOrThrow();
+                    var showResult = overlay.Show();
+                    if (showResult.IsSuccess)
+                    {
+                        cursorOverlay = overlay;
+                    }
+                    else
+                    {
+                        showResult.Match(
+                            () => throw new InvalidOperationException("Unreachable result state"),
+                            error => _logger.LogWarning("Failed to show cursor overlay: {Error}", error));
+                        overlay.Dispose();
+                    }
+                }
+            }
+
+            await Task.Delay(WindowHideDelayMs, ct);
+
+            var selector = new SlopScreenRegionSelector(_processRunner);
+            var selection = await selector.SelectAsync(ct);
+            if (cursorOverlay is not null)
+            {
+                cursorOverlay.Hide().Match(
+                    () => { },
+                    error => _logger.LogWarning("Failed to hide cursor overlay: {Error}", error));
+            }
+
+            return selection;
         }
-        catch (Exception ex) when (ex is not OutOfMemoryException)
+        finally
         {
-            _logger.LogWarning(ex, "Failed to create cursor overlay");
-            return null;
+            cursorOverlay?.Dispose();
         }
     }
 

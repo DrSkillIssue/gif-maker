@@ -59,3 +59,32 @@ public readonly struct Result<T> where T : notnull
     public T GetValueOrThrow(Func<string, Exception> exceptionFactory) =>
         IsSuccess ? _value : throw exceptionFactory(_error);
 }
+
+public readonly struct Result
+{
+    private readonly string? _error;
+
+    [MemberNotNullWhen(false, nameof(_error))]
+    public bool IsSuccess { get; }
+
+    private Result(bool isSuccess, string? error)
+    {
+        IsSuccess = isSuccess;
+        _error = error;
+    }
+
+    public static Result Ok() => new(true, null);
+
+    public static Result Fail(string error) => new(false, error);
+
+    public TResult Match<TResult>(Func<TResult> onSuccess, Func<string, TResult> onError) =>
+        IsSuccess ? onSuccess() : onError(_error);
+
+    public void Match(Action onSuccess, Action<string> onError)
+    {
+        if (IsSuccess)
+            onSuccess();
+        else
+            onError(_error);
+    }
+}

@@ -53,12 +53,14 @@ public static class CliRunner
     private static async Task<int> RunScreenshotAsync(CliArgs.Screenshot args, CancellationToken ct)
     {
         var service = new ScreenshotService();
+        var desktop = new X11Desktop();
         ScreenshotPointer pointer = args.Pointer switch
         {
             CliScreenshotPointer.Excluded => new ScreenshotPointer.Excluded(),
-            CliScreenshotPointer.Included when args.Source is ScreenshotSource.InteractiveSelection &&
-                WindowPositioner.GetPointerPosition() is { } position =>
-                new ScreenshotPointer.FrozenAt(new ScreenPoint(position.X, position.Y)),
+            CliScreenshotPointer.Included when args.Source is ScreenshotSource.InteractiveSelection =>
+                desktop.GetPointerLocation().Match<ScreenshotPointer>(
+                    point => new ScreenshotPointer.FrozenAt(point),
+                    _ => new ScreenshotPointer.Live()),
             CliScreenshotPointer.Included => new ScreenshotPointer.Live(),
             _ => throw new InvalidOperationException($"Unhandled screenshot pointer: {args.Pointer.GetType().Name}")
         };
@@ -74,7 +76,7 @@ public static class CliRunner
             },
             error =>
             {
-                if (error == "Selection cancelled")
+                if (error == SlopScreenRegionSelector.SelectionCancelled)
                 {
                     Console.WriteLine("Selection cancelled.");
                     return 0;
@@ -100,7 +102,7 @@ public static class CliRunner
         Console.WriteLine("Select area to record...");
 
         // Select area
-        using var selector = new AreaSelector();
+        var selector = new SlopScreenRegionSelector();
         var regionResult = await selector.SelectAsync(ct).ConfigureAwait(false);
 
         return await regionResult.Match(
@@ -174,7 +176,7 @@ public static class CliRunner
             },
             error =>
             {
-                if (error == "Selection cancelled")
+                if (error == SlopScreenRegionSelector.SelectionCancelled)
                 {
                     Console.WriteLine("Selection cancelled.");
                     return Task.FromResult(0);

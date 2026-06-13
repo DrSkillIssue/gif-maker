@@ -18,8 +18,6 @@ public abstract record ScreenshotSource
     public sealed record ActiveWindow : ScreenshotSource;
 }
 
-public readonly record struct ScreenPoint(int X, int Y);
-
 /// <summary>
 /// Pointer rendering requested at the screenshot capture boundary.
 /// </summary>

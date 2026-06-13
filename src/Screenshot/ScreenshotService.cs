@@ -14,6 +14,7 @@ public sealed class ScreenshotService
     private readonly ScreenshotFiles _files;
     private readonly FfmpegScreenshotCapture _capture;
     private readonly ActiveWindowRegionReader _activeWindow;
+    private readonly X11Desktop _desktop;
 
     public ScreenshotService(
         IProcessRunner? processRunner = null,
@@ -23,6 +24,7 @@ public sealed class ScreenshotService
         _files = files ?? new ScreenshotFiles();
         _capture = new FfmpegScreenshotCapture(_processRunner);
         _activeWindow = new ActiveWindowRegionReader(_processRunner);
+        _desktop = new X11Desktop();
     }
 
     public async Task<Result<CapturedScreenshot>> CaptureAsync(
@@ -35,7 +37,19 @@ public sealed class ScreenshotService
         if (plan.Pointer is null)
             return Result<CapturedScreenshot>.Fail("Screenshot pointer is required");
 
-        var regionResult = await ResolveSourceAsync(plan.Source, ct).ConfigureAwait(false);
+        if (plan.Source is null)
+            return Result<CapturedScreenshot>.Fail("Screenshot source is required");
+
+        var regionResult = plan.Source switch
+        {
+            ScreenshotSource.SelectedRegion selected => Result<ScreenRegion>.Ok(selected.Region),
+            ScreenshotSource.InteractiveSelection => await new SlopScreenRegionSelector(_processRunner).SelectAsync(ct).ConfigureAwait(false),
+            ScreenshotSource.FullScreen => _desktop.GetScreenSize().Match(
+                size => ScreenRegion.Create(0, 0, size.Width, size.Height),
+                Result<ScreenRegion>.Fail),
+            ScreenshotSource.ActiveWindow => await _activeWindow.ReadAsync(ct).ConfigureAwait(false),
+            _ => Result<ScreenRegion>.Fail($"Unknown screenshot source: {plan.Source.GetType().Name}")
+        };
         if (!regionResult.IsSuccess)
             return regionResult.Match(
                 _ => throw new InvalidOperationException("Unreachable result state"),
@@ -49,45 +63,21 @@ public sealed class ScreenshotService
 
         var region = regionResult.GetValueOrThrow();
         var file = fileResult.GetValueOrThrow();
+        var displayResult = X11DisplayName.Current();
+        if (!displayResult.IsSuccess)
+            return displayResult.Match(
+                _ => throw new InvalidOperationException("Unreachable result state"),
+                Result<CapturedScreenshot>.Fail);
+
         var frame = new ResolvedScreenshotFrame(
             region,
             plan.Pointer,
             file,
-            X11Display.GetCurrent());
+            displayResult.GetValueOrThrow());
 
         var captureResult = await _capture.CaptureAsync(frame, ct).ConfigureAwait(false);
         return captureResult.Match(
             capturedFile => Result<CapturedScreenshot>.Ok(new CapturedScreenshot(capturedFile, region)),
             Result<CapturedScreenshot>.Fail);
-    }
-
-    private async Task<Result<ScreenRegion>> ResolveSourceAsync(ScreenshotSource source, CancellationToken ct)
-    {
-        if (source is null)
-            return Result<ScreenRegion>.Fail("Screenshot source is required");
-
-        return source switch
-        {
-            ScreenshotSource.SelectedRegion selected => Result<ScreenRegion>.Ok(selected.Region),
-            ScreenshotSource.InteractiveSelection => await SelectRegionAsync(ct).ConfigureAwait(false),
-            ScreenshotSource.FullScreen => GetFullScreenRegion(),
-            ScreenshotSource.ActiveWindow => await _activeWindow.ReadAsync(ct).ConfigureAwait(false),
-            _ => Result<ScreenRegion>.Fail($"Unknown screenshot source: {source.GetType().Name}")
-        };
-    }
-
-    private async Task<Result<ScreenRegion>> SelectRegionAsync(CancellationToken ct)
-    {
-        using var selector = new AreaSelector(_processRunner);
-        return await selector.SelectAsync(ct).ConfigureAwait(false);
-    }
-
-    private static Result<ScreenRegion> GetFullScreenRegion()
-    {
-        var bounds = WindowPositioner.GetScreenBounds();
-        if (bounds is null)
-            return Result<ScreenRegion>.Fail("Failed to get screen bounds");
-
-        return ScreenRegion.Create(0, 0, bounds.Value.Width, bounds.Value.Height);
     }
 }

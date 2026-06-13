@@ -51,7 +51,7 @@ internal sealed class FfmpegScreenshotCapture
     {
         var region = frame.Region;
         var videoSize = $"{region.Width}x{region.Height}";
-        var input = $"{frame.Display}+{region.X},{region.Y}";
+        var input = frame.Display.FormatInput(region);
 
         if (frame.Pointer is ScreenshotPointer.FrozenAt frozen)
         {
@@ -102,7 +102,7 @@ internal sealed class FfmpegScreenshotCapture
 
     private static string BuildCursorFilter(int x, int y)
     {
-        var rowWidths = CursorShape.RowWidths;
+        var rowWidths = PointerGlyph.LeftArrow.RowWidths.Span;
         var filters = new List<string>(rowWidths.Length * 3 + 4);
 
         for (var row = 0; row < rowWidths.Length; row++)
@@ -131,4 +131,4 @@ internal readonly record struct ResolvedScreenshotFrame(
     ScreenRegion Region,
     ScreenshotPointer Pointer,
     ScreenshotFile OutputFile,
-    string Display);
+    X11DisplayName Display);

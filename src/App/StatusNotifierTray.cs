@@ -6,6 +6,7 @@ namespace GifMaker.App;
 [SupportedOSPlatform("linux")]
 internal sealed class StatusNotifierTray : IDisposable
 {
+    private readonly StatusNotifierMenu _menu;
     private readonly StatusNotifierItemEndpoint _endpoint;
     private readonly Action<AppAction> _dispatch;
 
@@ -14,21 +15,41 @@ internal sealed class StatusNotifierTray : IDisposable
         ArgumentNullException.ThrowIfNull(dispatch);
 
         _dispatch = dispatch;
-        var item = new StatusNotifierItem(
-            IconName: "camera-video",
-            Title: "GifMaker",
-            Tooltip: "GifMaker - Screen Recorder");
+        StatusNotifierMenu? menu = null;
+        StatusNotifierItemEndpoint? endpoint = null;
 
-        _endpoint = new StatusNotifierItemEndpoint(application, item);
-        _endpoint.Activated += OnActivated;
-        _endpoint.SecondaryActivated += OnSecondaryActivated;
+        try
+        {
+            menu = new StatusNotifierMenu(_dispatch);
+            var item = new StatusNotifierItem(
+                IconName: "camera-video",
+                Title: "GifMaker",
+                Tooltip: "GifMaker - Screen Recorder",
+                MenuPath: StatusNotifierMenu.ObjectPath);
+
+            endpoint = new StatusNotifierItemEndpoint(application, item);
+            endpoint.Activated += OnActivated;
+            endpoint.SecondaryActivated += OnSecondaryActivated;
+            endpoint.ContextMenuRequested += menu.ShowToUser;
+
+            _menu = menu;
+            _endpoint = endpoint;
+        }
+        catch
+        {
+            endpoint?.Dispose();
+            menu?.Dispose();
+            throw;
+        }
     }
 
     public void Dispose()
     {
         _endpoint.Activated -= OnActivated;
         _endpoint.SecondaryActivated -= OnSecondaryActivated;
+        _endpoint.ContextMenuRequested -= _menu.ShowToUser;
         _endpoint.Dispose();
+        _menu.Dispose();
     }
 
     private void OnActivated() => _dispatch(new AppAction.ShowWindow());
@@ -36,7 +57,143 @@ internal sealed class StatusNotifierTray : IDisposable
     private void OnSecondaryActivated() => _dispatch(new AppAction.CaptureSelection());
 }
 
-internal sealed record StatusNotifierItem(string IconName, string Title, string Tooltip);
+internal sealed class StatusNotifierMenu : IDisposable
+{
+    public const string ObjectPath = "/StatusNotifierItem/Menu";
+
+    private readonly Action<AppAction> _dispatch;
+    private readonly DbusMenuItemActivatedFunc _itemActivated;
+    private readonly List<nint> _items = [];
+    private readonly List<(nint Item, ulong HandlerId)> _signalHandlers = [];
+    private readonly List<GCHandle> _actionHandles = [];
+    private readonly nint _server;
+    private readonly nint _root;
+    private int _disposed;
+
+    public StatusNotifierMenu(Action<AppAction> dispatch)
+    {
+        ArgumentNullException.ThrowIfNull(dispatch);
+
+        _dispatch = dispatch;
+        _itemActivated = OnItemActivated;
+        try
+        {
+            _server = DbusMenuNative.dbusmenu_server_new(ObjectPath);
+            if (_server == nint.Zero)
+                throw new InvalidOperationException("Failed to create tray menu server");
+
+            _root = DbusMenuNative.dbusmenu_menuitem_new();
+            if (_root == nint.Zero)
+                throw new InvalidOperationException("Failed to create tray menu root");
+
+            AddItem(1, "Show Window", new AppAction.ShowWindow());
+            AddItem(2, "Record", new AppAction.ShowRecord());
+            AddItem(3, "Screenshot", new AppAction.ShowScreenshot());
+            AddItem(4, "Quit", new AppAction.Quit());
+
+            DbusMenuNative.dbusmenu_server_set_root(_server, _root);
+        }
+        catch
+        {
+            Dispose();
+            throw;
+        }
+    }
+
+    public void ShowToUser()
+    {
+        if (_disposed != 0)
+            return;
+
+        DbusMenuNative.dbusmenu_menuitem_show_to_user(_root, 0);
+    }
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+
+        foreach (var (item, handlerId) in _signalHandlers)
+            DbusMenuNative.g_signal_handler_disconnect(item, handlerId);
+
+        foreach (var handle in _actionHandles)
+        {
+            if (handle.IsAllocated)
+                handle.Free();
+        }
+
+        foreach (var item in _items)
+            DbusMenuNative.g_object_unref(item);
+
+        if (_root != nint.Zero)
+            DbusMenuNative.g_object_unref(_root);
+
+        if (_server != nint.Zero)
+            DbusMenuNative.g_object_unref(_server);
+    }
+
+    private void AddItem(int id, string label, AppAction action)
+    {
+        var item = DbusMenuNative.dbusmenu_menuitem_new_with_id(id);
+        if (item == nint.Zero)
+            throw new InvalidOperationException($"Failed to create tray menu item: {label}");
+
+        GCHandle actionHandle = default;
+        ulong handlerId = 0;
+        try
+        {
+            if (!DbusMenuNative.dbusmenu_menuitem_property_set(item, "label", label))
+                throw new InvalidOperationException($"Failed to set tray menu item label: {label}");
+
+            if (!DbusMenuNative.dbusmenu_menuitem_property_set_bool(item, "enabled", true))
+                throw new InvalidOperationException($"Failed to enable tray menu item: {label}");
+
+            actionHandle = GCHandle.Alloc(action);
+            handlerId = DbusMenuNative.g_signal_connect_data(
+                item,
+                "item-activated",
+                _itemActivated,
+                GCHandle.ToIntPtr(actionHandle),
+                nint.Zero,
+                0);
+            if (handlerId == 0)
+                throw new InvalidOperationException($"Failed to connect tray menu item activation: {label}");
+
+            if (!DbusMenuNative.dbusmenu_menuitem_child_append(_root, item))
+                throw new InvalidOperationException($"Failed to add tray menu item: {label}");
+
+            _signalHandlers.Add((item, handlerId));
+            _actionHandles.Add(actionHandle);
+            _items.Add(item);
+        }
+        catch
+        {
+            if (handlerId != 0)
+                DbusMenuNative.g_signal_handler_disconnect(item, handlerId);
+
+            if (actionHandle.IsAllocated)
+                actionHandle.Free();
+
+            DbusMenuNative.g_object_unref(item);
+            throw;
+        }
+    }
+
+    private void OnItemActivated(nint menuitem, uint timestamp, nint userData)
+    {
+        var handle = GCHandle.FromIntPtr(userData);
+        if (handle.Target is not AppAction action)
+            return;
+
+        GLib.Functions.IdleAdd(0, () =>
+        {
+            _dispatch(action);
+            return false;
+        });
+    }
+}
+
+internal sealed record StatusNotifierItem(string IconName, string Title, string Tooltip, string MenuPath);
 
 /// <summary>
 /// StatusNotifierItem D-Bus endpoint.
@@ -155,6 +312,8 @@ internal sealed partial class StatusNotifierItemEndpoint : IDisposable
 
     public event Action? SecondaryActivated;
 
+    public event Action? ContextMenuRequested;
+
     private static void FreeErrorAndThrow(nint error, string message)
     {
         string? errorMsg = null;
@@ -178,8 +337,7 @@ internal sealed partial class StatusNotifierItemEndpoint : IDisposable
     {
         var uniqueNamePtr = g_dbus_connection_get_unique_name(_connection);
         var uniqueName = Marshal.PtrToStringUTF8(uniqueNamePtr) ?? "";
-        var serviceId = $"{uniqueName}{ObjectPath}";
-        var parameters = g_variant_new_parsed($"('{serviceId}',)");
+        var parameters = g_variant_new_parsed($"('{uniqueName}',)");
 
         g_dbus_connection_call(
             _connection,
@@ -258,6 +416,10 @@ internal sealed partial class StatusNotifierItemEndpoint : IDisposable
                 break;
 
             case "ContextMenu":
+                RaiseContextMenuRequested();
+                g_dbus_method_invocation_return_value(invocation, nint.Zero);
+                break;
+
             case "Scroll":
             default:
                 g_dbus_method_invocation_return_value(invocation, nint.Zero);
@@ -291,7 +453,7 @@ internal sealed partial class StatusNotifierItemEndpoint : IDisposable
             "IconName" => g_variant_new_string(_item.IconName),
             "IconThemePath" => g_variant_new_string(""),
             "ItemIsMenu" => g_variant_new_boolean(false),
-            "Menu" => g_variant_new_object_path("/NO_DBUSMENU"),
+            "Menu" => g_variant_new_object_path(_item.MenuPath),
             "ToolTip" => BuildTooltipVariant(),
             _ => nint.Zero
         };
@@ -322,6 +484,15 @@ internal sealed partial class StatusNotifierItemEndpoint : IDisposable
         GLib.Functions.IdleAdd(0, () =>
         {
             SecondaryActivated?.Invoke();
+            return false;
+        });
+    }
+
+    private void RaiseContextMenuRequested()
+    {
+        GLib.Functions.IdleAdd(0, () =>
+        {
+            ContextMenuRequested?.Invoke();
             return false;
         });
     }
@@ -418,4 +589,58 @@ internal sealed partial class StatusNotifierItemEndpoint : IDisposable
 
     [LibraryImport(LibGLib)]
     private static partial void g_error_free(nint error);
+}
+
+[UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+internal delegate void DbusMenuItemActivatedFunc(nint menuitem, uint timestamp, nint userData);
+
+internal static partial class DbusMenuNative
+{
+    private const string LibDbusMenu = "libdbusmenu-glib.so.4";
+    private const string LibGObject = "libgobject-2.0.so.0";
+
+    [LibraryImport(LibDbusMenu, StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial nint dbusmenu_server_new(string objectPath);
+
+    [LibraryImport(LibDbusMenu)]
+    internal static partial void dbusmenu_server_set_root(nint server, nint root);
+
+    [LibraryImport(LibDbusMenu)]
+    internal static partial nint dbusmenu_menuitem_new();
+
+    [LibraryImport(LibDbusMenu)]
+    internal static partial nint dbusmenu_menuitem_new_with_id(int id);
+
+    [LibraryImport(LibDbusMenu, StringMarshalling = StringMarshalling.Utf8)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool dbusmenu_menuitem_property_set(nint menuitem, string property, string value);
+
+    [LibraryImport(LibDbusMenu, StringMarshalling = StringMarshalling.Utf8)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool dbusmenu_menuitem_property_set_bool(
+        nint menuitem,
+        string property,
+        [MarshalAs(UnmanagedType.Bool)] bool value);
+
+    [LibraryImport(LibDbusMenu)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool dbusmenu_menuitem_child_append(nint parent, nint child);
+
+    [LibraryImport(LibDbusMenu)]
+    internal static partial void dbusmenu_menuitem_show_to_user(nint menuitem, uint timestamp);
+
+    [LibraryImport(LibGObject, StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial ulong g_signal_connect_data(
+        nint instance,
+        string detailedSignal,
+        DbusMenuItemActivatedFunc handler,
+        nint data,
+        nint destroyData,
+        int flags);
+
+    [LibraryImport(LibGObject)]
+    internal static partial void g_signal_handler_disconnect(nint instance, ulong handlerId);
+
+    [LibraryImport(LibGObject)]
+    internal static partial void g_object_unref(nint obj);
 }

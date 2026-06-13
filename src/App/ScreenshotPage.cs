@@ -1,6 +1,7 @@
 using System.Runtime.Versioning;
 using System.Text;
 using Gtk;
+using GifMaker.Core;
 using GifMaker.Screenshot;
 using GifMaker.X11;
 
@@ -29,6 +30,7 @@ public sealed class ScreenshotPage : Box
     private bool _shortcutsEnabled = true;
     private Gdk.Texture? _previewTexture;
     private DragSource? _previewDragSource;
+    private readonly X11Desktop _desktop = new();
 
     public event Action<ScreenshotIntent>? IntentRaised;
 
@@ -132,9 +134,11 @@ public sealed class ScreenshotPage : Box
             return new ScreenshotPointer.Excluded();
 
         if (source is ScreenshotSource.InteractiveSelection &&
-            WindowPositioner.GetPointerPosition() is { } position)
+            _desktop.GetPointerLocation().Match<ScreenshotPointer?>(
+                point => new ScreenshotPointer.FrozenAt(point),
+                _ => null) is { } pointer)
         {
-            return new ScreenshotPointer.FrozenAt(new ScreenPoint(position.X, position.Y));
+            return pointer;
         }
 
         return new ScreenshotPointer.Live();

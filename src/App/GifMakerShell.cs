@@ -16,8 +16,8 @@ internal sealed class GifMakerShell : IDisposable
 
     private MainWindow? _mainWindow;
     private StatusNotifierTray? _tray;
-    private GlobalHotkey? _hotkey;
-    private Thread? _hotkeyThread;
+    private X11GlobalShortcutListener<AppAction>? _globalShortcuts;
+    private Thread? _globalShortcutThread;
     private int _disposed;
 
     public GifMakerShell(
@@ -30,7 +30,37 @@ internal sealed class GifMakerShell : IDisposable
         _logger = logger ?? NullLogger<GifMakerShell>.Instance;
         _app.OnActivate += OnActivate;
         RegisterActions(_app);
-        RegisterGlobalHotkeys(_cts.Token);
+        try
+        {
+            var shortcutResult = X11GlobalShortcutListener<AppAction>.Create(
+            [
+                new X11Shortcut<AppAction>(
+                    new AppAction.ShowRecord(),
+                    X11Key.S,
+                    X11Modifiers.Control | X11Modifiers.Alt),
+                new X11Shortcut<AppAction>(
+                    new AppAction.CaptureSelection(),
+                    X11Key.Print,
+                    X11Modifiers.None)
+            ]);
+
+            shortcutResult.Match(
+                listener =>
+                {
+                    _globalShortcuts = listener;
+                    _globalShortcutThread = new Thread(RunGlobalShortcutLoop)
+                    {
+                        IsBackground = true,
+                        Name = "GifMaker-GlobalShortcut"
+                    };
+                    _globalShortcutThread.Start();
+                },
+                error => _logger.LogWarning("Failed to initialize global shortcuts: {Error}", error));
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            _logger.LogWarning(ex, "Failed to initialize global shortcuts");
+        }
     }
 
     public void Dispatch(AppAction action)
@@ -92,12 +122,12 @@ internal sealed class GifMakerShell : IDisposable
 
         _cts.Cancel();
 
-        var hotkeyThread = _hotkeyThread;
-        if (hotkeyThread is not null && hotkeyThread != Thread.CurrentThread)
-            hotkeyThread.Join(TimeSpan.FromSeconds(2));
+        var globalShortcutThread = _globalShortcutThread;
+        if (globalShortcutThread is not null && globalShortcutThread != Thread.CurrentThread)
+            globalShortcutThread.Join(TimeSpan.FromSeconds(2));
 
         _tray?.Dispose();
-        _hotkey?.Dispose();
+        _globalShortcuts?.Dispose();
         _cts.Dispose();
     }
 
@@ -177,53 +207,29 @@ internal sealed class GifMakerShell : IDisposable
         app.AddAction(action);
     }
 
-    private void RegisterGlobalHotkeys(CancellationToken ct)
+    private void RunGlobalShortcutLoop()
     {
-        try
-        {
-            _hotkey = new GlobalHotkey();
-
-            if (!_hotkey.Register(HotkeyAction.SelectArea))
-                _logger.LogWarning("Failed to register Ctrl+Alt+S hotkey");
-
-            if (!_hotkey.Register(HotkeyAction.Screenshot))
-                _logger.LogWarning("Failed to register Print hotkey");
-
-            _hotkeyThread = new Thread(() => ReadGlobalHotkeys(ct))
-            {
-                IsBackground = true,
-                Name = "GifMaker-Hotkey"
-            };
-            _hotkeyThread.Start();
-        }
-        catch (Exception ex) when (ex is not OutOfMemoryException)
-        {
-            _logger.LogWarning(ex, "Failed to initialize global hotkeys");
-        }
-    }
-
-    private void ReadGlobalHotkeys(CancellationToken ct)
-    {
-        var hotkey = _hotkey;
-        if (hotkey is null)
+        var globalShortcuts = _globalShortcuts;
+        if (globalShortcuts is null)
             return;
 
-        while (!ct.IsCancellationRequested)
+        while (!_cts.IsCancellationRequested)
         {
-            var action = hotkey.WaitForHotkey(ct);
-            if (ct.IsCancellationRequested)
-                break;
-
-            AppAction? appAction = action switch
+            var actionResult = globalShortcuts.Wait(_cts.Token);
+            if (!actionResult.IsSuccess)
             {
-                HotkeyAction.SelectArea => new AppAction.ShowRecord(),
-                HotkeyAction.Screenshot => new AppAction.CaptureSelection(),
-                _ => null
-            };
+                actionResult.Match(
+                    _ => { },
+                    error =>
+                    {
+                        if (!_cts.IsCancellationRequested)
+                            _logger.LogWarning("Global shortcut listener stopped: {Error}", error);
+                    });
 
-            if (appAction is null)
-                continue;
+                break;
+            }
 
+            var appAction = actionResult.GetValueOrThrow();
             GLib.Functions.IdleAdd(0, () =>
             {
                 Dispatch(appAction);
