@@ -11,8 +11,6 @@ internal static partial class X11Native
     internal const uint KeyPressMask = 1u << 0;
     internal const int GrabModeAsync = 1;
     internal const int KeyPress = 2;
-    internal const int PropModeReplace = 0;
-    internal const nint XA_ATOM = 4;
     internal const uint ShiftMask = 1u << 0;
     internal const uint LockMask = 1u << 1;
     internal const uint ControlMask = 1u << 2;
@@ -42,12 +40,6 @@ internal static partial class X11Native
     internal static partial int XDisplayHeight(nint display, int screen);
 
     [LibraryImport(LibX11)]
-    internal static partial nint XBlackPixel(nint display, int screen);
-
-    [LibraryImport(LibX11)]
-    internal static partial nint XWhitePixel(nint display, int screen);
-
-    [LibraryImport(LibX11)]
     internal static partial int XConnectionNumber(nint display);
 
     [LibraryImport(LibX11)]
@@ -55,36 +47,6 @@ internal static partial class X11Native
 
     [LibraryImport(LibX11)]
     internal static partial int XSync(nint display, [MarshalAs(UnmanagedType.Bool)] bool discard);
-
-    [LibraryImport(LibX11)]
-    internal static partial nint XCreateSimpleWindow(
-        nint display,
-        nint parent,
-        int x,
-        int y,
-        uint width,
-        uint height,
-        uint borderWidth,
-        nint border,
-        nint background);
-
-    [LibraryImport(LibX11)]
-    internal static partial int XDestroyWindow(nint display, nint window);
-
-    [LibraryImport(LibX11)]
-    internal static partial int XMapWindow(nint display, nint window);
-
-    [LibraryImport(LibX11)]
-    internal static partial int XUnmapWindow(nint display, nint window);
-
-    [LibraryImport(LibX11)]
-    internal static partial int XRaiseWindow(nint display, nint window);
-
-    [LibraryImport(LibX11)]
-    internal static partial int XSetWindowBorderWidth(nint display, nint window, uint width);
-
-    [LibraryImport(LibX11)]
-    internal static partial int XSetWindowBorder(nint display, nint window, nint pixel);
 
     [LibraryImport(LibX11, EntryPoint = "XMoveWindow")]
     internal static partial int XMoveWindowById(nint display, nuint window, int x, int y);
@@ -137,70 +99,10 @@ internal static partial class X11Native
     internal static partial int XPending(nint display);
 
     [LibraryImport(LibX11)]
-    internal static partial nint XCreateGC(nint display, nint drawable, nint valueMask, nint values);
-
-    [LibraryImport(LibX11)]
-    internal static partial int XFreeGC(nint display, nint gc);
-
-    [LibraryImport(LibX11)]
-    internal static partial int XSetForeground(nint display, nint gc, nint foreground);
-
-    [LibraryImport(LibX11)]
-    internal static partial int XFillRectangle(
-        nint display,
-        nint drawable,
-        nint gc,
-        int x,
-        int y,
-        uint width,
-        uint height);
-
-    [LibraryImport(LibX11)]
-    internal static partial nint XCreatePixmap(nint display, nint drawable, uint width, uint height, uint depth);
-
-    [LibraryImport(LibX11)]
-    internal static partial int XFreePixmap(nint display, nint pixmap);
-
-    [LibraryImport(LibX11)]
     internal static partial int XKeysymToKeycode(nint display, nint keysym);
-
-    [LibraryImport(LibX11, EntryPoint = "XInternAtom", StringMarshalling = StringMarshalling.Utf8)]
-    internal static partial nint XInternAtom(
-        nint display,
-        string atomName,
-        [MarshalAs(UnmanagedType.Bool)] bool onlyIfExists);
-
-    [LibraryImport(LibX11)]
-    internal static partial int XChangeProperty(
-        nint display,
-        nint window,
-        nint property,
-        nint type,
-        int format,
-        int mode,
-        ref nint data,
-        int nelements);
 
     [LibraryImport(LibGtkGdk, EntryPoint = "gdk_x11_surface_get_xid")]
     internal static partial nuint GdkX11SurfaceGetXid(nint surface);
-}
-
-internal static partial class XextNative
-{
-    private const string LibXext = "libXext.so.6";
-
-    internal const int ShapeBounding = 0;
-    internal const int ShapeSet = 0;
-
-    [LibraryImport(LibXext)]
-    internal static partial void XShapeCombineMask(
-        nint display,
-        nint dest,
-        int destKind,
-        int xOff,
-        int yOff,
-        nint src,
-        int op);
 }
 
 internal static partial class LibCNative
@@ -271,63 +173,6 @@ internal sealed class XDisplayHandle : SafeHandle
     protected override bool ReleaseHandle()
     {
         _ = X11Native.XCloseDisplay(handle);
-        return true;
-    }
-}
-
-internal sealed class XWindowHandle : SafeHandle
-{
-    private readonly XDisplayHandle _display;
-
-    public XWindowHandle(XDisplayHandle display, nint window) : base(nint.Zero, ownsHandle: true)
-    {
-        _display = display;
-        SetHandle(window);
-    }
-
-    public override bool IsInvalid => handle == nint.Zero;
-
-    protected override bool ReleaseHandle()
-    {
-        _ = X11Native.XDestroyWindow(_display.DangerousGetHandle(), handle);
-        return true;
-    }
-}
-
-internal sealed class XPixmapHandle : SafeHandle
-{
-    private readonly XDisplayHandle _display;
-
-    public XPixmapHandle(XDisplayHandle display, nint pixmap) : base(nint.Zero, ownsHandle: true)
-    {
-        _display = display;
-        SetHandle(pixmap);
-    }
-
-    public override bool IsInvalid => handle == nint.Zero;
-
-    protected override bool ReleaseHandle()
-    {
-        _ = X11Native.XFreePixmap(_display.DangerousGetHandle(), handle);
-        return true;
-    }
-}
-
-internal sealed class XGraphicsContextHandle : SafeHandle
-{
-    private readonly XDisplayHandle _display;
-
-    public XGraphicsContextHandle(XDisplayHandle display, nint graphicsContext) : base(nint.Zero, ownsHandle: true)
-    {
-        _display = display;
-        SetHandle(graphicsContext);
-    }
-
-    public override bool IsInvalid => handle == nint.Zero;
-
-    protected override bool ReleaseHandle()
-    {
-        _ = X11Native.XFreeGC(_display.DangerousGetHandle(), handle);
         return true;
     }
 }

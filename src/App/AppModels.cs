@@ -50,7 +50,6 @@ public abstract record RecordIntent
 {
     private RecordIntent() { }
 
-    public sealed record SelectRegion : RecordIntent;
     public sealed record ToggleRecording : RecordIntent;
     public sealed record CancelConversion : RecordIntent;
     public sealed record OpenSaved : RecordIntent;
@@ -63,7 +62,6 @@ public abstract record RecordViewState
 
     public sealed record Idle : RecordViewState;
     public sealed record Selecting : RecordViewState;
-    public sealed record Ready(ScreenRegion Region) : RecordViewState;
     public sealed record Recording(int Fps) : RecordViewState;
     public sealed record Stopping(int Fps) : RecordViewState;
     public sealed record Converting : RecordViewState;
@@ -75,7 +73,9 @@ public abstract record ScreenshotIntent
 {
     private ScreenshotIntent() { }
 
-    public sealed record Capture(ScreenshotSource Source) : ScreenshotIntent;
+    public sealed record CaptureSelection(bool IncludePointer) : ScreenshotIntent;
+    public sealed record CaptureScreen(bool IncludePointer) : ScreenshotIntent;
+    public sealed record CaptureWindow(bool IncludePointer) : ScreenshotIntent;
     public sealed record OpenSaved : ScreenshotIntent;
     public sealed record OpenContainingFolder : ScreenshotIntent;
     public sealed record CopySaved : ScreenshotIntent;
@@ -88,9 +88,16 @@ public abstract record ScreenshotViewState
 
     public sealed record Idle : ScreenshotViewState;
     public sealed record Selecting : ScreenshotViewState;
-    public sealed record Capturing(ScreenshotSource Source) : ScreenshotViewState;
+    public sealed record Capturing(ScreenshotCaptureKind Kind) : ScreenshotViewState;
     public sealed record Saved(SavedMedia Media, ScreenRegion Region, Gdk.Texture? Preview) : ScreenshotViewState;
     public sealed record Error(string Message) : ScreenshotViewState;
 }
 
 public readonly record struct SavedMedia(string Path);
+
+public enum ScreenshotCaptureKind
+{
+    Selection,
+    Screen,
+    Window
+}

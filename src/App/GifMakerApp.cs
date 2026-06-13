@@ -23,12 +23,12 @@ public sealed class GifMakerApp : IDisposable
         _logger = logger ?? NullLogger<GifMakerApp>.Instance;
         var processRunner = ProcessRunner.Default;
         var desktopFiles = new DesktopFileActions(processRunner);
+        _app = Gtk.Application.New(AppId, Gio.ApplicationFlags.FlagsNone);
         var services = new AppServices(
             CreateRecordingSession: () => new RecordingSession(processRunner),
-            CreateScreenshotSession: () => new ScreenshotSession(processRunner),
+            CreateScreenshotSession: () => new ScreenshotSession(_app, processRunner),
             DesktopFiles: desktopFiles);
 
-        _app = Gtk.Application.New(AppId, Gio.ApplicationFlags.FlagsNone);
         _shell = new GifMakerShell(_app, services);
     }
 

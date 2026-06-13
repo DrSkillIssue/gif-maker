@@ -21,7 +21,6 @@ public sealed class RecordPage : Box
     private const int DefaultFpsIndex = 2;
 
     private readonly Label _statusLabel;
-    private readonly Button _selectButton;
     private readonly Button _recordButton;
     private readonly Button _openButton;
     private readonly Button _copyButton;
@@ -42,16 +41,10 @@ public sealed class RecordPage : Box
         MarginStart = 20;
         MarginEnd = 20;
 
-        _statusLabel = Label.New("Select an area to record");
+        _statusLabel = Label.New("Ready to record");
         _statusLabel.AddCssClass("dim-label");
         _statusLabel.Wrap = true;
         Append(_statusLabel);
-
-        _selectButton = Button.NewWithLabel("Select Area");
-        _selectButton.AddCssClass("suggested-action");
-        _selectButton.MarginTop = 10;
-        _selectButton.OnClicked += (_, _) => IntentRaised?.Invoke(new RecordIntent.SelectRegion());
-        Append(_selectButton);
 
         var optionsBox = Box.New(Orientation.Vertical, 8);
         optionsBox.MarginTop = 15;
@@ -90,7 +83,7 @@ public sealed class RecordPage : Box
 
         _recordButton = Button.NewWithLabel("Record");
         _recordButton.AddCssClass("suggested-action");
-        _recordButton.Sensitive = false;
+        _recordButton.Sensitive = true;
         _recordButton.MarginTop = 10;
         _recordButton.OnClicked += (_, _) => IntentRaised?.Invoke(new RecordIntent.ToggleRecording());
         Append(_recordButton);
@@ -146,54 +139,48 @@ public sealed class RecordPage : Box
 
     public void Render(RecordViewState state)
     {
-        var (status, selectSensitive, recordLabel, recordSensitive, recordDestructive,
+        var (status, recordLabel, recordSensitive, recordDestructive,
             optionsSensitive, openSensitive, copySensitive, cancelSensitive) = state switch
             {
                 RecordViewState.Idle => (
-                    "Select an area to record",
-                    true, "Record", false, false,
+                    "Ready to record",
+                    "Record", true, false,
                     true, false, false, false),
 
                 RecordViewState.Selecting => (
                     "Click and drag to select area...",
-                    false, "Record", false, false,
+                    "Record", false, false,
                     false, false, false, false),
-
-                RecordViewState.Ready ready => (
-                    $"Ready: {ready.Region.Width}x{ready.Region.Height}",
-                    true, "Record", true, false,
-                    true, false, false, false),
 
                 RecordViewState.Recording recording => (
                     $"Recording at {recording.Fps} fps...",
-                    false, "Stop", true, true,
+                    "Stop", true, true,
                     false, false, false, false),
 
                 RecordViewState.Stopping stopping => (
                     $"Stopping ({stopping.Fps} fps)...",
-                    false, "Stop", false, true,
+                    "Stop", false, true,
                     false, false, false, false),
 
                 RecordViewState.Converting => (
                     "Converting...",
-                    false, "Converting", false, false,
+                    "Converting", false, false,
                     false, false, false, true),
 
                 RecordViewState.Saved saved => (
                     $"Saved: {Path.GetFileName(saved.Media.Path)}",
-                    true, "New Recording", true, false,
+                    "New Recording", true, false,
                     true, true, true, false),
 
                 RecordViewState.Error error => (
                     $"Error: {error.Message}",
-                    true, "Retry", true, false,
+                    "Retry", true, false,
                     true, false, false, false),
 
                 _ => throw new InvalidOperationException($"Unhandled state: {state.GetType().Name}")
             };
 
         _statusLabel.SetLabel(status);
-        _selectButton.Sensitive = selectSensitive;
         _recordButton.SetLabel(recordLabel);
         _recordButton.Sensitive = recordSensitive;
 

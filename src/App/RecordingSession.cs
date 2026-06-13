@@ -9,7 +9,6 @@ namespace GifMaker.App;
 
 public sealed class RecordingSession : IAsyncDisposable
 {
-    private const int OverlayBorderWidth = 3;
     private const int WindowHideDelayMs = 100;
 
     private readonly IProcessRunner _processRunner;
@@ -17,8 +16,6 @@ public sealed class RecordingSession : IAsyncDisposable
     private readonly Func<FFmpegRecorder> _createRecorder;
     private readonly Func<FFmpegConverter> _createConverter;
 
-    private ScreenRegion? _region;
-    private ScreenOverlay? _overlay;
     private FFmpegRecorder? _recorder;
     private int? _fps;
     private CancellationTokenSource? _conversionCts;
@@ -36,43 +33,28 @@ public sealed class RecordingSession : IAsyncDisposable
         _createConverter = createConverter ?? (() => new FFmpegConverter());
     }
 
-    public async Task<Result<RecordViewState>> SelectRegionAsync(
-        WindowVisibilityLease visibility,
-        CancellationToken ct = default)
+    public async Task<Result<RecordViewState>> StartFromSelectionAsync(
+        RecordStartOptions options,
+        WindowVisibilityLease visibility)
     {
         ThrowIfDisposed();
-        ClearSelection();
+
+        if (_recorder is not null)
+            return Result<RecordViewState>.Fail("Recording already in progress");
 
         using var hiddenWindow = visibility;
-        await Task.Delay(WindowHideDelayMs, ct);
+        await Task.Delay(WindowHideDelayMs);
 
         var selector = new SlopScreenRegionSelector(_processRunner);
-        var selection = await selector.SelectAsync(ct);
+        var selection = await selector.SelectAsync();
 
         return selection.Match(
             region =>
             {
-                var overlayResult = ScreenOverlay.CreateRegionFrame(
-                    region,
-                    new OverlayBorder(OverlayBorderWidth, 0xFF3333));
-                if (!overlayResult.IsSuccess)
-                    return overlayResult.Match(
-                        _ => throw new InvalidOperationException("Unreachable result state"),
-                        Result<RecordViewState>.Fail);
-
-                var overlay = overlayResult.GetValueOrThrow();
-                var showResult = overlay.Show();
-                if (!showResult.IsSuccess)
-                {
-                    overlay.Dispose();
-                    return showResult.Match(
-                        () => throw new InvalidOperationException("Unreachable result state"),
-                        Result<RecordViewState>.Fail);
-                }
-
-                _region = region;
-                _overlay = overlay;
-                return Result<RecordViewState>.Ok(new RecordViewState.Ready(region));
+                var settingsResult = FFmpegRecorder.RecordingSettings.Create(region, options.Fps);
+                return settingsResult.Match(
+                    StartRecording,
+                    Result<RecordViewState>.Fail);
             },
             error =>
             {
@@ -83,36 +65,25 @@ public sealed class RecordingSession : IAsyncDisposable
                     ? Result<RecordViewState>.Ok(new RecordViewState.Idle())
                     : Result<RecordViewState>.Fail(error);
             });
-    }
 
-    public Result<RecordViewState> Start(RecordStartOptions options)
-    {
-        ThrowIfDisposed();
-
-        if (_region is not { } region || _overlay is null)
-            return Result<RecordViewState>.Fail("Select an area before recording");
-
-        var settingsResult = FFmpegRecorder.RecordingSettings.Create(region, options.Fps);
-        return settingsResult.Match(
-            settings =>
+        Result<RecordViewState> StartRecording(FFmpegRecorder.RecordingSettings settings)
+        {
+            FFmpegRecorder? recorder = null;
+            try
             {
-                FFmpegRecorder? recorder = null;
-                try
-                {
-                    recorder = _createRecorder();
-                    recorder.Start(settings);
-                    _recorder = recorder;
-                    _fps = options.Fps;
-                    return Result<RecordViewState>.Ok(new RecordViewState.Recording(options.Fps));
-                }
-                catch (Exception ex) when (ex is not OutOfMemoryException)
-                {
-                    recorder?.Dispose();
-                    _logger.LogError(ex, "Recording start failed");
-                    return Result<RecordViewState>.Fail(ex.Message);
-                }
-            },
-            Result<RecordViewState>.Fail);
+                recorder = _createRecorder();
+                recorder.Start(settings);
+                _recorder = recorder;
+                _fps = options.Fps;
+                return Result<RecordViewState>.Ok(new RecordViewState.Recording(options.Fps));
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                recorder?.Dispose();
+                _logger.LogError(ex, "Recording start failed");
+                return Result<RecordViewState>.Fail(ex.Message);
+            }
+        }
     }
 
     public async Task<Result<RecordViewState>> StopAndConvertAsync(
@@ -121,7 +92,7 @@ public sealed class RecordingSession : IAsyncDisposable
     {
         ThrowIfDisposed();
 
-        if (_recorder is not { } recorder || _overlay is not { } overlay || _fps is not { } fps)
+        if (_recorder is not { } recorder || _fps is not { } fps)
             return Result<RecordViewState>.Fail("No recording in progress");
 
         string? tempPath = null;
@@ -132,9 +103,6 @@ public sealed class RecordingSession : IAsyncDisposable
         {
             await recorder.StopAsync(ct);
             tempPath = recorder.TempPath;
-            overlay.Hide().Match(
-                () => { },
-                error => _logger.LogWarning("Failed to hide recording overlay: {Error}", error));
 
             var outputPath = RecordingOutputPaths.GenerateRecordingPath(target.Format, target.OutputDirectory);
             var profile = ConversionProfile.Create(target.Format, fps).GetValueOrThrow();
@@ -180,10 +148,7 @@ public sealed class RecordingSession : IAsyncDisposable
             }
 
             recorder.Dispose();
-            overlay.Dispose();
             _recorder = null;
-            _overlay = null;
-            _region = null;
             _fps = null;
         }
     }
@@ -202,23 +167,10 @@ public sealed class RecordingSession : IAsyncDisposable
         _conversionCts?.Cancel();
         _conversionCts?.Dispose();
         _recorder?.Dispose();
-        _overlay?.Dispose();
         _conversionCts = null;
         _recorder = null;
-        _overlay = null;
-        _region = null;
         _fps = null;
         return ValueTask.CompletedTask;
-    }
-
-    private void ClearSelection()
-    {
-        if (_recorder is not null)
-            return;
-
-        _overlay?.Dispose();
-        _overlay = null;
-        _region = null;
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed != 0, this);

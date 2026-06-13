@@ -2,34 +2,28 @@ using GifMaker.Core;
 
 namespace GifMaker.Screenshot;
 
-/// <summary>
-/// Source of a screenshot region before capture.
-/// </summary>
-public abstract record ScreenshotSource
+public abstract record ScreenshotCapture
 {
-    private ScreenshotSource() { }
+    private ScreenshotCapture() { }
 
-    public sealed record SelectedRegion(ScreenRegion Region) : ScreenshotSource;
+    public sealed record Area(
+        ScreenRegion Region,
+        ScreenshotPointer Pointer,
+        ScreenshotDestination Destination) : ScreenshotCapture;
 
-    public sealed record InteractiveSelection : ScreenshotSource;
+    public sealed record FullScreen(
+        ScreenshotPointer Pointer,
+        ScreenshotDestination Destination) : ScreenshotCapture;
 
-    public sealed record FullScreen : ScreenshotSource;
-
-    public sealed record ActiveWindow : ScreenshotSource;
+    public sealed record ActiveWindow(
+        ScreenshotPointer Pointer,
+        ScreenshotDestination Destination) : ScreenshotCapture;
 }
 
-/// <summary>
-/// Pointer rendering requested at the screenshot capture boundary.
-/// </summary>
-public abstract record ScreenshotPointer
+public enum ScreenshotPointer
 {
-    private ScreenshotPointer() { }
-
-    public sealed record Excluded : ScreenshotPointer;
-
-    public sealed record Live : ScreenshotPointer;
-
-    public sealed record FrozenAt(ScreenPoint Position) : ScreenshotPointer;
+    Excluded,
+    Included
 }
 
 /// <summary>
@@ -51,11 +45,45 @@ public abstract record ScreenshotDestination
     public sealed record File(string Path) : ScreenshotDestination;
 }
 
-public sealed record ScreenshotPlan(
-    ScreenshotSource Source,
-    ScreenshotPointer Pointer,
-    ScreenshotDestination Destination);
-
 public readonly record struct ScreenshotFile(string Path);
 
 public readonly record struct CapturedScreenshot(ScreenshotFile File, ScreenRegion Region);
+
+public sealed class FrozenScreenshot : IDisposable
+{
+    public FrozenScreenshot(ScreenshotFile file, ScreenRegion bounds, GdkPixbuf.Pixbuf image)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        File = file;
+        Bounds = bounds;
+        Image = image;
+    }
+
+    public ScreenshotFile File { get; }
+
+    public ScreenRegion Bounds { get; }
+
+    internal GdkPixbuf.Pixbuf Image { get; }
+
+    public void Dispose()
+    {
+        Image.Dispose();
+
+        try
+        {
+            if (System.IO.File.Exists(File.Path))
+                System.IO.File.Delete(File.Path);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
+}
+
+public readonly record struct FrozenScreenshotCrop(
+    FrozenScreenshot Frame,
+    ScreenRegion Region,
+    ScreenshotDestination Destination);

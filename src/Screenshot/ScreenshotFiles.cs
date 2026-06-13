@@ -7,6 +7,8 @@ namespace GifMaker.Screenshot;
 /// </summary>
 public sealed class ScreenshotFiles
 {
+    private const string TemporaryPrefix = "gifmaker-screenshot-";
+
     public Result<ScreenshotFile> Reserve(ScreenshotDestination destination)
     {
         if (destination is null)
@@ -30,6 +32,19 @@ public sealed class ScreenshotFiles
 
     private static Result<ScreenshotFile> ReserveDefault() =>
         ReserveDirectory(GetDefaultScreenshotDirectory());
+
+    public Result<ScreenshotFile> ReserveTemporary()
+    {
+        try
+        {
+            var path = Path.Combine(Path.GetTempPath(), $"{TemporaryPrefix}{Guid.NewGuid():N}.png");
+            return Result<ScreenshotFile>.Ok(new ScreenshotFile(path));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            return Result<ScreenshotFile>.Fail($"Failed to reserve temporary screenshot file: {ex.Message}");
+        }
+    }
 
     private static Result<ScreenshotFile> ReserveDirectory(string path)
     {

@@ -81,7 +81,7 @@ public sealed class DesktopFileActions
         if (string.IsNullOrEmpty(uri))
             return Result<SavedMedia>.Fail("Failed to get file URI");
 
-        Span<nint> providerHandles = stackalloc nint[MaxProviders];
+        var providers = new ContentProvider[MaxProviders];
         var providerCount = 0;
 
         try
@@ -92,31 +92,59 @@ public sealed class DesktopFileActions
             {
                 var imageProvider = CreateImageProvider(media.Path, mimeType);
                 if (imageProvider is not null)
-                    providerHandles[providerCount++] = imageProvider.Handle.DangerousGetHandle();
+                    providers[providerCount++] = imageProvider;
             }
 
             var uriListProvider = CreateUriListProvider(uri);
-            providerHandles[providerCount++] = uriListProvider.Handle.DangerousGetHandle();
+            providers[providerCount++] = uriListProvider;
 
             var gnomeProvider = CreateGnomeCopiedFilesProvider(uri);
-            providerHandles[providerCount++] = gnomeProvider.Handle.DangerousGetHandle();
+            providers[providerCount++] = gnomeProvider;
 
             var textProvider = CreateTextPlainProvider(media.Path);
-            providerHandles[providerCount++] = textProvider.Handle.DangerousGetHandle();
+            providers[providerCount++] = textProvider;
 
-            var handleArray = providerHandles[..providerCount].ToArray();
-            var unionHandle = GdkClipboardNative.GdkContentProviderNewUnion(handleArray, (nuint)providerCount);
+            var transferredProviderHandles = new nint[providerCount];
+            var transferredProviderCount = 0;
+            var unionHandle = nint.Zero;
 
-            if (unionHandle == 0)
-                return Result<SavedMedia>.Fail("Failed to create content provider union");
+            try
+            {
+                // GTK's union constructor consumes provider references; duplicate the GirCore-owned refs before transfer.
+                for (var i = 0; i < providerCount; i++)
+                {
+                    var handle = providers[i].Handle.DangerousGetHandle();
+                    transferredProviderHandles[i] = GdkClipboardNative.GObjectRef(handle);
+                    transferredProviderCount++;
+                }
 
-            var success = GdkClipboardNative.GdkClipboardSetContent(
-                clipboard.Handle.DangerousGetHandle(),
-                unionHandle);
+                unionHandle = GdkClipboardNative.GdkContentProviderNewUnion(
+                    transferredProviderHandles,
+                    (nuint)providerCount);
 
-            return success
-                ? Result<SavedMedia>.Ok(media)
-                : Result<SavedMedia>.Fail("Failed to set clipboard content");
+                if (unionHandle == 0)
+                    return Result<SavedMedia>.Fail("Failed to create content provider union");
+
+                transferredProviderCount = 0;
+
+                var success = GdkClipboardNative.GdkClipboardSetContent(
+                    clipboard.Handle.DangerousGetHandle(),
+                    unionHandle);
+
+                return success
+                    ? Result<SavedMedia>.Ok(media)
+                    : Result<SavedMedia>.Fail("Failed to set clipboard content");
+            }
+            finally
+            {
+                for (var i = 0; i < transferredProviderCount; i++)
+                    GdkClipboardNative.GObjectUnref(transferredProviderHandles[i]);
+
+                if (unionHandle != 0)
+                    GdkClipboardNative.GObjectUnref(unionHandle);
+
+                GC.KeepAlive(providers);
+            }
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {

@@ -92,6 +92,23 @@ public static class RunningProcessExtensions
 /// </summary>
 public sealed class ProcessRunner : IProcessRunner, IProcessLauncher
 {
+    private static readonly string[] DetachedRuntimeEnvironmentVariables =
+    [
+        "LD_AUDIT",
+        "LD_LIBRARY_PATH",
+        "LD_PRELOAD",
+        "GCONV_PATH",
+        "GDK_PIXBUF_MODULE_FILE",
+        "GDK_PIXBUF_MODULEDIR",
+        "GI_TYPELIB_PATH",
+        "GIO_EXTRA_MODULES",
+        "GTK_EXE_PREFIX",
+        "GTK_DATA_PREFIX",
+        "GTK_PATH",
+        "GTK_MODULES",
+        "GTK3_MODULES"
+    ];
+
     /// <summary>Singleton instance.</summary>
     public static ProcessRunner Default { get; } = new();
 
@@ -191,6 +208,18 @@ public sealed class ProcessRunner : IProcessRunner, IProcessLauncher
 
         foreach (var arg in command.Arguments)
             startInfo.ArgumentList.Add(arg);
+
+        if (forDetachedStart)
+        {
+            foreach (var variable in DetachedRuntimeEnvironmentVariables)
+                startInfo.Environment.Remove(variable);
+
+            foreach (var variable in startInfo.Environment.Keys.ToArray())
+            {
+                if (variable is "SNAP" || variable.StartsWith("SNAP_", StringComparison.Ordinal))
+                    startInfo.Environment.Remove(variable);
+            }
+        }
 
         return startInfo;
     }

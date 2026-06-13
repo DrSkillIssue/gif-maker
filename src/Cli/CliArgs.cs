@@ -21,7 +21,7 @@ public abstract record CliArgs
 
     /// <summary>Take screenshot and exit.</summary>
     public sealed record Screenshot(
-        ScreenshotSource Source,
+        CliScreenshotMode Mode,
         CliScreenshotPointer Pointer,
         ScreenshotDestination Destination) : CliArgs;
 
@@ -108,8 +108,8 @@ public static class CliParser
 
     private static CliArgs ParseScreenshot(ReadOnlySpan<string> args)
     {
-        ScreenshotSource source = new ScreenshotSource.InteractiveSelection();
-        CliScreenshotPointer pointer = new CliScreenshotPointer.Excluded();
+        var mode = CliScreenshotMode.Selection;
+        var pointer = CliScreenshotPointer.Excluded;
         var destination = ScreenshotDestination.Default;
 
         for (var i = 0; i < args.Length; i++)
@@ -121,15 +121,15 @@ public static class CliParser
                 case "-m" or "--mode":
                     if (i + 1 >= args.Length)
                         return new CliArgs.Invalid("--mode requires a value");
-                    var sourceStr = args[++i];
-                    var parsedSource = TryParseScreenshotSource(sourceStr);
-                    if (parsedSource is null)
-                        return new CliArgs.Invalid($"Unknown mode: {sourceStr}");
-                    source = parsedSource;
+                    var modeStr = args[++i];
+                    var parsedMode = TryParseScreenshotMode(modeStr);
+                    if (parsedMode is null)
+                        return new CliArgs.Invalid($"Unknown mode: {modeStr}");
+                    mode = parsedMode.Value;
                     break;
 
                 case "-p" or "--pointer":
-                    pointer = new CliScreenshotPointer.Included();
+                    pointer = CliScreenshotPointer.Included;
                     break;
 
                 case "-o" or "--output":
@@ -149,7 +149,7 @@ public static class CliParser
             }
         }
 
-        return new CliArgs.Screenshot(source, pointer, destination);
+        return new CliArgs.Screenshot(mode, pointer, destination);
     }
 
     private static CliArgs ParseRecord(ReadOnlySpan<string> args)
@@ -208,12 +208,12 @@ public static class CliParser
     /// <summary>Gets the version text.</summary>
     public static string GetVersionText() => VersionText;
 
-    private static ScreenshotSource? TryParseScreenshotSource(string value) =>
+    private static CliScreenshotMode? TryParseScreenshotMode(string value) =>
         value.ToLowerInvariant() switch
         {
-            "selection" or "s" => new ScreenshotSource.InteractiveSelection(),
-            "screen" or "c" => new ScreenshotSource.FullScreen(),
-            "window" or "w" => new ScreenshotSource.ActiveWindow(),
+            "selection" or "s" => CliScreenshotMode.Selection,
+            "screen" or "c" => CliScreenshotMode.Screen,
+            "window" or "w" => CliScreenshotMode.Window,
             _ => null
         };
 
@@ -227,11 +227,15 @@ public static class CliParser
         };
 }
 
-public abstract record CliScreenshotPointer
+public enum CliScreenshotMode
 {
-    private CliScreenshotPointer() { }
+    Selection,
+    Screen,
+    Window
+}
 
-    public sealed record Excluded : CliScreenshotPointer;
-
-    public sealed record Included : CliScreenshotPointer;
+public enum CliScreenshotPointer
+{
+    Excluded,
+    Included
 }

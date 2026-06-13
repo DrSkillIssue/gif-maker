@@ -53,21 +53,52 @@ public static class CliRunner
     private static async Task<int> RunScreenshotAsync(CliArgs.Screenshot args, CancellationToken ct)
     {
         var service = new ScreenshotService();
-        var desktop = new X11Desktop();
         ScreenshotPointer pointer = args.Pointer switch
         {
-            CliScreenshotPointer.Excluded => new ScreenshotPointer.Excluded(),
-            CliScreenshotPointer.Included when args.Source is ScreenshotSource.InteractiveSelection =>
-                desktop.GetPointerLocation().Match<ScreenshotPointer>(
-                    point => new ScreenshotPointer.FrozenAt(point),
-                    _ => new ScreenshotPointer.Live()),
-            CliScreenshotPointer.Included => new ScreenshotPointer.Live(),
-            _ => throw new InvalidOperationException($"Unhandled screenshot pointer: {args.Pointer.GetType().Name}")
+            CliScreenshotPointer.Excluded => ScreenshotPointer.Excluded,
+            CliScreenshotPointer.Included => ScreenshotPointer.Included,
+            _ => throw new InvalidOperationException($"Unhandled screenshot pointer: {args.Pointer}")
         };
-        var plan = new ScreenshotPlan(args.Source, pointer, args.Destination);
 
-        Console.WriteLine($"Screenshot mode: {DescribeSource(args.Source)}");
-        var result = await service.CaptureAsync(plan, ct).ConfigureAwait(false);
+        Console.WriteLine($"Screenshot mode: {DescribeMode(args.Mode)}");
+
+        Result<CapturedScreenshot> result;
+        if (args.Mode == CliScreenshotMode.Selection)
+        {
+            var selector = new SlopScreenRegionSelector();
+            var regionResult = await selector.SelectAsync(ct).ConfigureAwait(false);
+            if (!regionResult.IsSuccess)
+            {
+                return regionResult.Match(
+                    _ => throw new InvalidOperationException("Unreachable result state"),
+                    error =>
+                    {
+                        if (error == SlopScreenRegionSelector.SelectionCancelled)
+                        {
+                            Console.WriteLine("Selection cancelled.");
+                            return 0;
+                        }
+
+                        Console.Error.WriteLine($"Error: {error}");
+                        return 1;
+                    });
+            }
+
+            result = await service.CaptureAsync(
+                new ScreenshotCapture.Area(regionResult.GetValueOrThrow(), pointer, args.Destination),
+                ct).ConfigureAwait(false);
+        }
+        else
+        {
+            ScreenshotCapture capture = args.Mode switch
+            {
+                CliScreenshotMode.Screen => new ScreenshotCapture.FullScreen(pointer, args.Destination),
+                CliScreenshotMode.Window => new ScreenshotCapture.ActiveWindow(pointer, args.Destination),
+                _ => throw new InvalidOperationException($"Unhandled screenshot mode: {args.Mode}")
+            };
+            result = await service.CaptureAsync(capture, ct).ConfigureAwait(false);
+        }
+
         return result.Match(
             captured =>
             {
@@ -87,14 +118,13 @@ public static class CliRunner
             });
     }
 
-    private static string DescribeSource(ScreenshotSource source) =>
-        source switch
+    private static string DescribeMode(CliScreenshotMode mode) =>
+        mode switch
         {
-            ScreenshotSource.SelectedRegion => "Selection",
-            ScreenshotSource.InteractiveSelection => "Selection",
-            ScreenshotSource.FullScreen => "Screen",
-            ScreenshotSource.ActiveWindow => "Window",
-            _ => throw new InvalidOperationException($"Unhandled screenshot source: {source.GetType().Name}")
+            CliScreenshotMode.Selection => "Selection",
+            CliScreenshotMode.Screen => "Screen",
+            CliScreenshotMode.Window => "Window",
+            _ => throw new InvalidOperationException($"Unhandled screenshot mode: {mode}")
         };
 
     private static async Task<int> RunRecordAsync(CliArgs.Record args, CancellationToken ct)

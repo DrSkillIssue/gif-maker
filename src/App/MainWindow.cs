@@ -81,7 +81,7 @@ public sealed class MainWindow : Window
     }
 
     public void CaptureSelection() =>
-        _ = HandleScreenshotIntentAsync(new ScreenshotIntent.Capture(new ScreenshotSource.InteractiveSelection()));
+        _ = HandleScreenshotIntentAsync(new ScreenshotIntent.CaptureSelection(_screenshotPage.IncludePointer));
 
     public WindowVisibilityLease HideForExternalSelection()
     {
@@ -103,10 +103,6 @@ public sealed class MainWindow : Window
         {
             switch (intent)
             {
-                case RecordIntent.SelectRegion:
-                    await SelectRecordingRegionAsync();
-                    break;
-
                 case RecordIntent.ToggleRecording:
                     await ToggleRecordingAsync();
                     break;
@@ -144,26 +140,17 @@ public sealed class MainWindow : Window
         }
     }
 
-    private async Task SelectRecordingRegionAsync()
-    {
-        if (_recordState is RecordViewState.Recording or RecordViewState.Stopping or RecordViewState.Converting)
-            return;
-
-        RenderRecord(new RecordViewState.Selecting());
-        var session = _recordingSession ??= _services.CreateRecordingSession();
-        var result = await session.SelectRegionAsync(HideForExternalSelection());
-        result.Match(
-            RenderRecord,
-            error => RenderRecord(new RecordViewState.Error(Truncate(error))));
-    }
-
     private async Task ToggleRecordingAsync()
     {
         switch (_recordState)
         {
-            case RecordViewState.Ready:
+            case RecordViewState.Idle:
+                RenderRecord(new RecordViewState.Selecting());
                 var startSession = _recordingSession ??= _services.CreateRecordingSession();
-                startSession.Start(_recordPage.ReadStartOptions()).Match(
+                var startResult = await startSession.StartFromSelectionAsync(
+                    _recordPage.ReadStartOptions(),
+                    HideForExternalSelection());
+                startResult.Match(
                     RenderRecord,
                     error => RenderRecord(new RecordViewState.Error(Truncate(error))));
                 break;
@@ -196,8 +183,16 @@ public sealed class MainWindow : Window
         {
             switch (intent)
             {
-                case ScreenshotIntent.Capture capture:
-                    await CaptureScreenshotAsync(capture.Source);
+                case ScreenshotIntent.CaptureSelection selection:
+                    await CaptureScreenshotSelectionAsync(selection.IncludePointer);
+                    break;
+
+                case ScreenshotIntent.CaptureScreen screen:
+                    await CaptureScreenAsync(screen.IncludePointer);
+                    break;
+
+                case ScreenshotIntent.CaptureWindow window:
+                    await CaptureWindowAsync(window.IncludePointer);
                     break;
 
                 case ScreenshotIntent.OpenSaved:
@@ -242,19 +237,65 @@ public sealed class MainWindow : Window
         }
     }
 
-    private async Task CaptureScreenshotAsync(ScreenshotSource source)
+    private async Task CaptureScreenshotSelectionAsync(bool includePointer)
     {
         if (_screenshotState is ScreenshotViewState.Selecting or ScreenshotViewState.Capturing)
             return;
 
-        var pointer = _screenshotPage.ReadPointer(source);
-        RenderScreenshot(source is ScreenshotSource.InteractiveSelection
-            ? new ScreenshotViewState.Selecting()
-            : new ScreenshotViewState.Capturing(source));
+        RenderScreenshot(new ScreenshotViewState.Selecting());
 
-        var visibility = source is ScreenshotSource.InteractiveSelection ? HideForExternalSelection() : default;
         var session = _screenshotSession ??= _services.CreateScreenshotSession();
-        var result = await session.CaptureAsync(source, pointer, visibility);
+        var result = await session.CaptureSelectionAsync(
+            includePointer ? ScreenshotPointer.Included : ScreenshotPointer.Excluded,
+            HideForExternalSelection());
+        result.Match(
+            RenderScreenshot,
+            error => RenderScreenshot(new ScreenshotViewState.Error(Truncate(error))));
+
+        if (_screenshotState is ScreenshotViewState.Saved saved)
+        {
+            var copyResult = _services.DesktopFiles.CopyToClipboard(this, saved.Media);
+            if (copyResult.IsSuccess)
+                _logger.LogInformation("Screenshot copied to clipboard");
+        }
+    }
+
+    private async Task CaptureScreenAsync(bool includePointer)
+    {
+        if (_screenshotState is ScreenshotViewState.Selecting or ScreenshotViewState.Capturing)
+            return;
+
+        RenderScreenshot(new ScreenshotViewState.Capturing(ScreenshotCaptureKind.Screen));
+
+        var session = _screenshotSession ??= _services.CreateScreenshotSession();
+        var capture = new ScreenshotCapture.FullScreen(
+            includePointer ? ScreenshotPointer.Included : ScreenshotPointer.Excluded,
+            ScreenshotDestination.Default);
+        var result = await session.CaptureAsync(capture);
+        result.Match(
+            RenderScreenshot,
+            error => RenderScreenshot(new ScreenshotViewState.Error(Truncate(error))));
+
+        if (_screenshotState is ScreenshotViewState.Saved saved)
+        {
+            var copyResult = _services.DesktopFiles.CopyToClipboard(this, saved.Media);
+            if (copyResult.IsSuccess)
+                _logger.LogInformation("Screenshot copied to clipboard");
+        }
+    }
+
+    private async Task CaptureWindowAsync(bool includePointer)
+    {
+        if (_screenshotState is ScreenshotViewState.Selecting or ScreenshotViewState.Capturing)
+            return;
+
+        RenderScreenshot(new ScreenshotViewState.Capturing(ScreenshotCaptureKind.Window));
+
+        var session = _screenshotSession ??= _services.CreateScreenshotSession();
+        var capture = new ScreenshotCapture.ActiveWindow(
+            includePointer ? ScreenshotPointer.Included : ScreenshotPointer.Excluded,
+            ScreenshotDestination.Default);
+        var result = await session.CaptureAsync(capture);
         result.Match(
             RenderScreenshot,
             error => RenderScreenshot(new ScreenshotViewState.Error(Truncate(error))));

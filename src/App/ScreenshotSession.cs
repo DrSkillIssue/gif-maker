@@ -1,6 +1,5 @@
 using GifMaker.Core;
 using GifMaker.Screenshot;
-using GifMaker.X11;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -10,42 +9,64 @@ public sealed class ScreenshotSession
 {
     private const int WindowHideDelayMs = 100;
 
-    private readonly IProcessRunner _processRunner;
+    private readonly Gtk.Application _application;
     private readonly ScreenshotService _screenshotService;
     private readonly ILogger<ScreenshotSession> _logger;
 
     public ScreenshotSession(
+        Gtk.Application application,
         IProcessRunner? processRunner = null,
         ScreenshotService? screenshotService = null,
         ILogger<ScreenshotSession>? logger = null)
     {
-        _processRunner = processRunner ?? ProcessRunner.Default;
-        _screenshotService = screenshotService ?? new ScreenshotService(_processRunner);
+        ArgumentNullException.ThrowIfNull(application);
+        _application = application;
+        _screenshotService = screenshotService ?? new ScreenshotService(processRunner ?? ProcessRunner.Default);
         _logger = logger ?? NullLogger<ScreenshotSession>.Instance;
     }
 
     public async Task<Result<ScreenshotViewState>> CaptureAsync(
-        ScreenshotSource source,
+        ScreenshotCapture capture,
+        CancellationToken ct = default)
+    {
+        var captureResult = await _screenshotService.CaptureAsync(capture, ct);
+        return CreateSavedState(captureResult);
+    }
+
+    public async Task<Result<ScreenshotViewState>> CaptureSelectionAsync(
         ScreenshotPointer pointer,
         WindowVisibilityLease visibility,
         CancellationToken ct = default)
     {
-        var captureSource = source;
-        if (source is ScreenshotSource.InteractiveSelection)
-        {
-            var regionResult = await SelectRegionAsync(pointer, visibility, ct).ConfigureAwait(false);
-            if (!regionResult.IsSuccess)
-                return regionResult.Match(
-                    _ => throw new InvalidOperationException("Unreachable result state"),
-                    error => error == SlopScreenRegionSelector.SelectionCancelled
-                        ? Result<ScreenshotViewState>.Ok(new ScreenshotViewState.Idle())
-                        : Result<ScreenshotViewState>.Fail(error));
+        using var hiddenWindow = visibility;
 
-            captureSource = new ScreenshotSource.SelectedRegion(regionResult.GetValueOrThrow());
-        }
+        await Task.Delay(WindowHideDelayMs, ct);
 
-        var plan = new ScreenshotPlan(captureSource, pointer, ScreenshotDestination.Default);
-        var captureResult = await _screenshotService.CaptureAsync(plan, ct).ConfigureAwait(false);
+        var freezeResult = await _screenshotService.FreezeScreenAsync(pointer, ct);
+        if (!freezeResult.IsSuccess)
+            return freezeResult.Match(
+                _ => throw new InvalidOperationException("Unreachable result state"),
+                Result<ScreenshotViewState>.Fail);
+
+        using var frozen = freezeResult.GetValueOrThrow();
+        using var selectionWindow = new FrozenScreenshotSelectionWindow(_application, frozen);
+        var selectionResult = await selectionWindow.SelectAsync(ct);
+        if (!selectionResult.IsSuccess)
+            return selectionResult.Match(
+                _ => throw new InvalidOperationException("Unreachable result state"),
+                error => error == FrozenScreenshotSelectionWindow.SelectionCancelled
+                    ? Result<ScreenshotViewState>.Ok(new ScreenshotViewState.Idle())
+                    : Result<ScreenshotViewState>.Fail(error));
+
+        var crop = new FrozenScreenshotCrop(
+            frozen,
+            selectionResult.GetValueOrThrow(),
+            ScreenshotDestination.Default);
+        return CreateSavedState(_screenshotService.Crop(crop));
+    }
+
+    private Result<ScreenshotViewState> CreateSavedState(Result<CapturedScreenshot> captureResult)
+    {
         return captureResult.Match(
             result =>
             {
@@ -54,62 +75,6 @@ public sealed class ScreenshotSession
                 return Result<ScreenshotViewState>.Ok(new ScreenshotViewState.Saved(media, result.Region, preview));
             },
             Result<ScreenshotViewState>.Fail);
-    }
-
-    private async Task<Result<ScreenRegion>> SelectRegionAsync(
-        ScreenshotPointer pointer,
-        WindowVisibilityLease visibility,
-        CancellationToken ct)
-    {
-        using var hiddenWindow = visibility;
-        ScreenOverlay? cursorOverlay = null;
-
-        try
-        {
-            if (pointer is ScreenshotPointer.FrozenAt frozen)
-            {
-                var createResult = ScreenOverlay.CreateCursor(frozen.Position);
-                if (!createResult.IsSuccess)
-                {
-                    createResult.Match(
-                        _ => throw new InvalidOperationException("Unreachable result state"),
-                        error => _logger.LogWarning("Failed to create cursor overlay: {Error}", error));
-                }
-                else
-                {
-                    var overlay = createResult.GetValueOrThrow();
-                    var showResult = overlay.Show();
-                    if (showResult.IsSuccess)
-                    {
-                        cursorOverlay = overlay;
-                    }
-                    else
-                    {
-                        showResult.Match(
-                            () => throw new InvalidOperationException("Unreachable result state"),
-                            error => _logger.LogWarning("Failed to show cursor overlay: {Error}", error));
-                        overlay.Dispose();
-                    }
-                }
-            }
-
-            await Task.Delay(WindowHideDelayMs, ct);
-
-            var selector = new SlopScreenRegionSelector(_processRunner);
-            var selection = await selector.SelectAsync(ct);
-            if (cursorOverlay is not null)
-            {
-                cursorOverlay.Hide().Match(
-                    () => { },
-                    error => _logger.LogWarning("Failed to hide cursor overlay: {Error}", error));
-            }
-
-            return selection;
-        }
-        finally
-        {
-            cursorOverlay?.Dispose();
-        }
     }
 
     private Gdk.Texture? LoadPreview(string filePath)

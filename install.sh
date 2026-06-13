@@ -5,6 +5,7 @@ set -euo pipefail
 # Usage: ./install.sh [--system] [--prefix=PATH]
 
 PREFIX="$HOME/.local"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 for arg in "$@"; do
     case $arg in
@@ -23,26 +24,23 @@ done
 
 BINDIR="$PREFIX/bin"
 APPDIR="$PREFIX/share/applications"
+PUBLISH_DIR="$(mktemp -d -t gifmaker-publish.XXXXXX)"
+trap 'rm -rf "$PUBLISH_DIR"' EXIT
 
 echo "Installing GifMaker to $PREFIX"
 
-# Build if not already built
-if [[ ! -f "publish/gifmaker" ]]; then
-    echo "Building..."
-    dotnet publish -c Release -o publish
-    # Rename to lowercase
-    mv publish/GifMaker publish/gifmaker 2>/dev/null || true
-fi
+echo "Building..."
+dotnet publish "$SCRIPT_DIR/GifMaker.csproj" -c Release -r linux-x64 --self-contained true -o "$PUBLISH_DIR"
 
 # Install binary
 echo "Installing binary to $BINDIR"
 mkdir -p "$BINDIR"
-cp publish/gifmaker "$BINDIR/"
+cp "$PUBLISH_DIR/GifMaker" "$BINDIR/gifmaker"
 chmod +x "$BINDIR/gifmaker"
 
 # Install desktop file
 echo "Installing desktop file to $APPDIR"
 mkdir -p "$APPDIR"
-cp gifmaker.desktop.in "$APPDIR/com.gifmaker.app.desktop"
+cp "$SCRIPT_DIR/gifmaker.desktop.in" "$APPDIR/com.gifmaker.app.desktop"
 
 echo "Done. Make sure $BINDIR is in your PATH."
