@@ -89,12 +89,11 @@ src/
   FFmpegRecorder.cs
   RecordingException.cs
  Screenshot/
-  CaptureMode.cs
-  ScreenshotCapture.cs
-  ScreenshotOutputTarget.cs
-  ScreenshotRequest.cs
+  ActiveWindowRegionReader.cs
+  FfmpegScreenshotCapture.cs
+  ScreenshotFiles.cs
+  ScreenshotModel.cs
   ScreenshotService.cs
-  WindowGeometry.cs
  X11/
   AreaSelector.cs
   CursorOverlay.cs

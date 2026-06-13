@@ -80,7 +80,7 @@ public sealed class MainWindow : Window
     }
 
     public void CaptureSelection() =>
-        _ = HandleScreenshotIntentAsync(new ScreenshotIntent.Capture(CaptureMode.Selection));
+        _ = HandleScreenshotIntentAsync(new ScreenshotIntent.Capture(new ScreenshotSource.InteractiveSelection()));
 
     public WindowVisibilityLease HideForExternalSelection()
     {
@@ -196,7 +196,7 @@ public sealed class MainWindow : Window
             switch (intent)
             {
                 case ScreenshotIntent.Capture capture:
-                    await CaptureScreenshotAsync(capture.Mode);
+                    await CaptureScreenshotAsync(capture.Source);
                     break;
 
                 case ScreenshotIntent.OpenSaved:
@@ -241,19 +241,19 @@ public sealed class MainWindow : Window
         }
     }
 
-    private async Task CaptureScreenshotAsync(CaptureMode mode)
+    private async Task CaptureScreenshotAsync(ScreenshotSource source)
     {
         if (_screenshotState is ScreenshotViewState.Selecting or ScreenshotViewState.Capturing)
             return;
 
-        var options = _screenshotPage.ReadOptions(mode);
-        RenderScreenshot(mode == CaptureMode.Selection
+        var pointer = _screenshotPage.ReadPointer(source);
+        RenderScreenshot(source is ScreenshotSource.InteractiveSelection
             ? new ScreenshotViewState.Selecting()
-            : new ScreenshotViewState.Capturing(mode));
+            : new ScreenshotViewState.Capturing(source));
 
-        var visibility = mode == CaptureMode.Selection ? HideForExternalSelection() : default;
+        var visibility = source is ScreenshotSource.InteractiveSelection ? HideForExternalSelection() : default;
         var session = _screenshotSession ??= _services.CreateScreenshotSession();
-        var result = await session.CaptureAsync(options, visibility);
+        var result = await session.CaptureAsync(source, pointer, visibility);
         result.Match(
             RenderScreenshot,
             error => RenderScreenshot(new ScreenshotViewState.Error(Truncate(error))));

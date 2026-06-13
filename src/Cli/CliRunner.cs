@@ -53,50 +53,47 @@ public static class CliRunner
     private static async Task<int> RunScreenshotAsync(CliArgs.Screenshot args, CancellationToken ct)
     {
         var service = new ScreenshotService();
+        ScreenshotPointer pointer = args.Pointer switch
+        {
+            CliScreenshotPointer.Excluded => new ScreenshotPointer.Excluded(),
+            CliScreenshotPointer.Included when args.Source is ScreenshotSource.InteractiveSelection &&
+                WindowPositioner.GetPointerPosition() is { } position =>
+                new ScreenshotPointer.FrozenAt(new ScreenPoint(position.X, position.Y)),
+            CliScreenshotPointer.Included => new ScreenshotPointer.Live(),
+            _ => throw new InvalidOperationException($"Unhandled screenshot pointer: {args.Pointer.GetType().Name}")
+        };
+        var plan = new ScreenshotPlan(args.Source, pointer, args.Destination);
 
-        // Get cursor position before selection (for fixed cursor in selection mode)
-        var cursorPos = args.ShowPointer ? WindowPositioner.GetPointerPosition() : null;
-
-        // Get region based on mode
-        Console.WriteLine($"Screenshot mode: {args.Mode}");
-        var regionResult = await service.GetRegionAsync(args.Mode, ct).ConfigureAwait(false);
-
-        return await regionResult.Match(
-            async region =>
+        Console.WriteLine($"Screenshot mode: {DescribeSource(args.Source)}");
+        var result = await service.CaptureAsync(plan, ct).ConfigureAwait(false);
+        return result.Match(
+            captured =>
             {
-                var result = await service.CaptureAsync(
-                    new ScreenshotRequest(
-                        region,
-                        args.Mode,
-                        args.ShowPointer,
-                        cursorPos,
-                        ScreenshotOutputTarget.FromPath(args.OutputPath)),
-                    ct).ConfigureAwait(false);
-
-                return result.Match(
-                    r =>
-                    {
-                        Console.WriteLine($"Saved: {r.FilePath}");
-                        return 0;
-                    },
-                    error =>
-                    {
-                        Console.Error.WriteLine($"Error: {error}");
-                        return 1;
-                    });
+                Console.WriteLine($"Saved: {captured.File.Path}");
+                return 0;
             },
             error =>
             {
                 if (error == "Selection cancelled")
                 {
                     Console.WriteLine("Selection cancelled.");
-                    return Task.FromResult(0);
+                    return 0;
                 }
 
                 Console.Error.WriteLine($"Error: {error}");
-                return Task.FromResult(1);
-            }).ConfigureAwait(false);
+                return 1;
+            });
     }
+
+    private static string DescribeSource(ScreenshotSource source) =>
+        source switch
+        {
+            ScreenshotSource.SelectedRegion => "Selection",
+            ScreenshotSource.InteractiveSelection => "Selection",
+            ScreenshotSource.FullScreen => "Screen",
+            ScreenshotSource.ActiveWindow => "Window",
+            _ => throw new InvalidOperationException($"Unhandled screenshot source: {source.GetType().Name}")
+        };
 
     private static async Task<int> RunRecordAsync(CliArgs.Record args, CancellationToken ct)
     {

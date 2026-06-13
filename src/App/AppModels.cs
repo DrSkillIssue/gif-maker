@@ -71,25 +71,11 @@ public abstract record RecordViewState
     public sealed record Error(string Message) : RecordViewState;
 }
 
-public abstract record PointerCapture
-{
-    private PointerCapture() { }
-
-    public sealed record Excluded : PointerCapture;
-    public sealed record Live : PointerCapture;
-    public sealed record FrozenAt(int X, int Y) : PointerCapture;
-}
-
-public sealed record ScreenshotOptions(
-    CaptureMode Mode,
-    PointerCapture Pointer,
-    ScreenshotOutputTarget OutputTarget);
-
 public abstract record ScreenshotIntent
 {
     private ScreenshotIntent() { }
 
-    public sealed record Capture(CaptureMode Mode) : ScreenshotIntent;
+    public sealed record Capture(ScreenshotSource Source) : ScreenshotIntent;
     public sealed record OpenSaved : ScreenshotIntent;
     public sealed record OpenContainingFolder : ScreenshotIntent;
     public sealed record CopySaved : ScreenshotIntent;
@@ -102,7 +88,7 @@ public abstract record ScreenshotViewState
 
     public sealed record Idle : ScreenshotViewState;
     public sealed record Selecting : ScreenshotViewState;
-    public sealed record Capturing(CaptureMode Mode) : ScreenshotViewState;
+    public sealed record Capturing(ScreenshotSource Source) : ScreenshotViewState;
     public sealed record Saved(SavedMedia Media, ScreenRegion Region, Gdk.Texture? Preview) : ScreenshotViewState;
     public sealed record Error(string Message) : ScreenshotViewState;
 }

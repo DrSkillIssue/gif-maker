@@ -1,84 +1,82 @@
 using System.Runtime.Versioning;
 using GifMaker.Core;
 using GifMaker.X11;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace GifMaker.Screenshot;
 
 /// <summary>
-/// High-level screenshot service coordinating capture, save, and clipboard.
+/// Coordinates screenshot source resolution, file reservation, and capture.
 /// </summary>
 [SupportedOSPlatform("linux")]
 public sealed class ScreenshotService
 {
-    private readonly ILogger<ScreenshotService> _logger;
     private readonly IProcessRunner _processRunner;
-    private readonly ScreenshotCapture _capture;
-    private readonly WindowGeometry _windowGeometry;
+    private readonly ScreenshotFiles _files;
+    private readonly FfmpegScreenshotCapture _capture;
+    private readonly ActiveWindowRegionReader _activeWindow;
 
-    /// <summary>
-    /// Result of a screenshot operation.
-    /// </summary>
-    public readonly record struct ScreenshotResult(
-        string FilePath,
-        ScreenRegion Region,
-        CaptureMode Mode);
-
-    /// <summary>
-    /// Creates a ScreenshotService with optional dependencies.
-    /// </summary>
     public ScreenshotService(
-        ILogger<ScreenshotService>? logger = null,
-        IProcessRunner? processRunner = null)
+        IProcessRunner? processRunner = null,
+        ScreenshotFiles? files = null)
     {
-        _logger = logger ?? NullLogger<ScreenshotService>.Instance;
         _processRunner = processRunner ?? ProcessRunner.Default;
-        _capture = new ScreenshotCapture(logger: null, _processRunner);
-        _windowGeometry = new WindowGeometry(_processRunner);
+        _files = files ?? new ScreenshotFiles();
+        _capture = new FfmpegScreenshotCapture(_processRunner);
+        _activeWindow = new ActiveWindowRegionReader(_processRunner);
     }
 
-    /// <summary>
-    /// Gets the region for the specified capture mode.
-    /// </summary>
-    /// <param name="mode">Capture mode.</param>
-    /// <param name="ct">Cancellation token.</param>
-    /// <returns>Region to capture, or error.</returns>
-    public async Task<Result<ScreenRegion>> GetRegionAsync(CaptureMode mode, CancellationToken ct = default)
+    public async Task<Result<CapturedScreenshot>> CaptureAsync(
+        ScreenshotPlan plan,
+        CancellationToken ct = default)
     {
-        return mode switch
+        if (plan is null)
+            return Result<CapturedScreenshot>.Fail("Screenshot plan is required");
+
+        if (plan.Pointer is null)
+            return Result<CapturedScreenshot>.Fail("Screenshot pointer is required");
+
+        var regionResult = await ResolveSourceAsync(plan.Source, ct).ConfigureAwait(false);
+        if (!regionResult.IsSuccess)
+            return regionResult.Match(
+                _ => throw new InvalidOperationException("Unreachable result state"),
+                Result<CapturedScreenshot>.Fail);
+
+        var fileResult = _files.Reserve(plan.Destination);
+        if (!fileResult.IsSuccess)
+            return fileResult.Match(
+                _ => throw new InvalidOperationException("Unreachable result state"),
+                Result<CapturedScreenshot>.Fail);
+
+        var region = regionResult.GetValueOrThrow();
+        var file = fileResult.GetValueOrThrow();
+        var frame = new ResolvedScreenshotFrame(
+            region,
+            plan.Pointer,
+            file,
+            X11Display.GetCurrent());
+
+        var captureResult = await _capture.CaptureAsync(frame, ct).ConfigureAwait(false);
+        return captureResult.Match(
+            capturedFile => Result<CapturedScreenshot>.Ok(new CapturedScreenshot(capturedFile, region)),
+            Result<CapturedScreenshot>.Fail);
+    }
+
+    private async Task<Result<ScreenRegion>> ResolveSourceAsync(ScreenshotSource source, CancellationToken ct)
+    {
+        if (source is null)
+            return Result<ScreenRegion>.Fail("Screenshot source is required");
+
+        return source switch
         {
-            CaptureMode.Selection => await GetSelectionRegionAsync(ct).ConfigureAwait(false),
-            CaptureMode.Screen => GetFullScreenRegion(),
-            CaptureMode.Window => await _windowGeometry.GetActiveWindowAsync(ct).ConfigureAwait(false),
-            _ => Result<ScreenRegion>.Fail($"Unknown capture mode: {mode}")
+            ScreenshotSource.SelectedRegion selected => Result<ScreenRegion>.Ok(selected.Region),
+            ScreenshotSource.InteractiveSelection => await SelectRegionAsync(ct).ConfigureAwait(false),
+            ScreenshotSource.FullScreen => GetFullScreenRegion(),
+            ScreenshotSource.ActiveWindow => await _activeWindow.ReadAsync(ct).ConfigureAwait(false),
+            _ => Result<ScreenRegion>.Fail($"Unknown screenshot source: {source.GetType().Name}")
         };
     }
 
-    public async Task<Result<ScreenshotResult>> CaptureAsync(ScreenshotRequest request, CancellationToken ct = default)
-    {
-        var outputPath = request.OutputTarget.ResolvePath();
-
-        var settingsResult = ScreenshotCapture.CaptureSettings.Create(
-            request.Region,
-            request.ShowPointer,
-            fixedCursorPosition: request.FixedCursorPosition);
-
-        return await settingsResult.Match<Task<Result<ScreenshotResult>>>(
-            async settings =>
-            {
-                var captureResult = await _capture.CaptureAsync(settings, outputPath, ct)
-                    .ConfigureAwait(false);
-
-                return captureResult.Match(
-                    path => Result<ScreenshotResult>.Ok(new ScreenshotResult(path, request.Region, request.Mode)),
-                    error => Result<ScreenshotResult>.Fail(error));
-            },
-            error => Task.FromResult(Result<ScreenshotResult>.Fail(error)))
-            .ConfigureAwait(false);
-    }
-
-    private async Task<Result<ScreenRegion>> GetSelectionRegionAsync(CancellationToken ct)
+    private async Task<Result<ScreenRegion>> SelectRegionAsync(CancellationToken ct)
     {
         using var selector = new AreaSelector(_processRunner);
         return await selector.SelectAsync(ct).ConfigureAwait(false);

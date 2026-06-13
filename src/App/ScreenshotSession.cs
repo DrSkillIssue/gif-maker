@@ -20,48 +20,44 @@ public sealed class ScreenshotSession
         ILogger<ScreenshotSession>? logger = null)
     {
         _processRunner = processRunner ?? ProcessRunner.Default;
-        _screenshotService = screenshotService ?? new ScreenshotService(logger: null, _processRunner);
+        _screenshotService = screenshotService ?? new ScreenshotService(_processRunner);
         _logger = logger ?? NullLogger<ScreenshotSession>.Instance;
     }
 
     public async Task<Result<ScreenshotViewState>> CaptureAsync(
-        ScreenshotOptions options,
+        ScreenshotSource source,
+        ScreenshotPointer pointer,
         WindowVisibilityLease visibility,
         CancellationToken ct = default)
     {
-        var regionResult = options.Mode == CaptureMode.Selection
-            ? await SelectRegionAsync(options.Pointer, visibility, ct)
-            : await _screenshotService.GetRegionAsync(options.Mode, ct);
+        var captureSource = source;
+        if (source is ScreenshotSource.InteractiveSelection)
+        {
+            var regionResult = await SelectRegionAsync(pointer, visibility, ct).ConfigureAwait(false);
+            if (!regionResult.IsSuccess)
+                return regionResult.Match(
+                    _ => throw new InvalidOperationException("Unreachable result state"),
+                    error => error == "Selection cancelled"
+                        ? Result<ScreenshotViewState>.Ok(new ScreenshotViewState.Idle())
+                        : Result<ScreenshotViewState>.Fail(error));
 
-        if (!regionResult.IsSuccess)
-            return regionResult.Match(
-                _ => throw new InvalidOperationException("Unreachable result state"),
-                error => error == "Selection cancelled"
-                    ? Result<ScreenshotViewState>.Ok(new ScreenshotViewState.Idle())
-                    : Result<ScreenshotViewState>.Fail(error));
+            captureSource = new ScreenshotSource.SelectedRegion(regionResult.GetValueOrThrow());
+        }
 
-        var region = regionResult.GetValueOrThrow();
-        var (showPointer, fixedCursorPosition) = ResolvePointer(options.Pointer);
-        var request = new ScreenshotRequest(
-            region,
-            options.Mode,
-            showPointer,
-            fixedCursorPosition,
-            options.OutputTarget);
-
-        var captureResult = await _screenshotService.CaptureAsync(request, ct);
+        var plan = new ScreenshotPlan(captureSource, pointer, ScreenshotDestination.Default);
+        var captureResult = await _screenshotService.CaptureAsync(plan, ct).ConfigureAwait(false);
         return captureResult.Match(
             result =>
             {
-                var media = new SavedMedia(result.FilePath);
-                var preview = LoadPreview(result.FilePath);
+                var media = new SavedMedia(result.File.Path);
+                var preview = LoadPreview(result.File.Path);
                 return Result<ScreenshotViewState>.Ok(new ScreenshotViewState.Saved(media, result.Region, preview));
             },
             Result<ScreenshotViewState>.Fail);
     }
 
     private async Task<Result<ScreenRegion>> SelectRegionAsync(
-        PointerCapture pointer,
+        ScreenshotPointer pointer,
         WindowVisibilityLease visibility,
         CancellationToken ct)
     {
@@ -77,14 +73,14 @@ public sealed class ScreenshotSession
         return selection;
     }
 
-    private CursorOverlay? CreateCursorOverlay(PointerCapture pointer)
+    private CursorOverlay? CreateCursorOverlay(ScreenshotPointer pointer)
     {
-        if (pointer is not PointerCapture.FrozenAt frozen)
+        if (pointer is not ScreenshotPointer.FrozenAt frozen)
             return null;
 
         try
         {
-            return new CursorOverlay(frozen.X, frozen.Y);
+            return new CursorOverlay(frozen.Position.X, frozen.Position.Y);
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
@@ -92,15 +88,6 @@ public sealed class ScreenshotSession
             return null;
         }
     }
-
-    private static (bool ShowPointer, (int X, int Y)? FixedCursorPosition) ResolvePointer(PointerCapture pointer) =>
-        pointer switch
-        {
-            PointerCapture.Excluded => (false, null),
-            PointerCapture.Live => (true, null),
-            PointerCapture.FrozenAt frozen => (true, (frozen.X, frozen.Y)),
-            _ => throw new InvalidOperationException($"Unhandled pointer capture: {pointer.GetType().Name}")
-        };
 
     private Gdk.Texture? LoadPreview(string filePath)
     {

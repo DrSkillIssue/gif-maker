@@ -21,9 +21,9 @@ public abstract record CliArgs
 
     /// <summary>Take screenshot and exit.</summary>
     public sealed record Screenshot(
-        CaptureMode Mode,
-        bool ShowPointer,
-        string? OutputPath) : CliArgs;
+        ScreenshotSource Source,
+        CliScreenshotPointer Pointer,
+        ScreenshotDestination Destination) : CliArgs;
 
     /// <summary>Start recording (requires stop signal).</summary>
     public sealed record Record(
@@ -108,9 +108,9 @@ public static class CliParser
 
     private static CliArgs ParseScreenshot(ReadOnlySpan<string> args)
     {
-        var mode = CaptureMode.Selection;
-        var showPointer = false;
-        string? outputPath = null;
+        ScreenshotSource source = new ScreenshotSource.InteractiveSelection();
+        CliScreenshotPointer pointer = new CliScreenshotPointer.Excluded();
+        var destination = ScreenshotDestination.Default;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -121,21 +121,21 @@ public static class CliParser
                 case "-m" or "--mode":
                     if (i + 1 >= args.Length)
                         return new CliArgs.Invalid("--mode requires a value");
-                    var modeStr = args[++i];
-                    var parsedMode = TryParseMode(modeStr);
-                    if (parsedMode is null)
-                        return new CliArgs.Invalid($"Unknown mode: {modeStr}");
-                    mode = parsedMode.Value;
+                    var sourceStr = args[++i];
+                    var parsedSource = TryParseScreenshotSource(sourceStr);
+                    if (parsedSource is null)
+                        return new CliArgs.Invalid($"Unknown mode: {sourceStr}");
+                    source = parsedSource;
                     break;
 
                 case "-p" or "--pointer":
-                    showPointer = true;
+                    pointer = new CliScreenshotPointer.Included();
                     break;
 
                 case "-o" or "--output":
                     if (i + 1 >= args.Length)
                         return new CliArgs.Invalid("--output requires a path");
-                    outputPath = args[++i];
+                    destination = ScreenshotDestination.FromCliPath(args[++i]);
                     break;
 
                 case "-h" or "--help":
@@ -144,13 +144,12 @@ public static class CliParser
                 default:
                     if (arg.StartsWith('-'))
                         return new CliArgs.Invalid($"Unknown screenshot option: {arg}");
-                    // Positional arg = output path
-                    outputPath ??= arg;
+                    destination = ScreenshotDestination.FromCliPath(arg);
                     break;
             }
         }
 
-        return new CliArgs.Screenshot(mode, showPointer, outputPath);
+        return new CliArgs.Screenshot(source, pointer, destination);
     }
 
     private static CliArgs ParseRecord(ReadOnlySpan<string> args)
@@ -209,12 +208,12 @@ public static class CliParser
     /// <summary>Gets the version text.</summary>
     public static string GetVersionText() => VersionText;
 
-    private static CaptureMode? TryParseMode(string value) =>
+    private static ScreenshotSource? TryParseScreenshotSource(string value) =>
         value.ToLowerInvariant() switch
         {
-            "selection" or "s" => CaptureMode.Selection,
-            "screen" or "c" => CaptureMode.Screen,
-            "window" or "w" => CaptureMode.Window,
+            "selection" or "s" => new ScreenshotSource.InteractiveSelection(),
+            "screen" or "c" => new ScreenshotSource.FullScreen(),
+            "window" or "w" => new ScreenshotSource.ActiveWindow(),
             _ => null
         };
 
@@ -226,4 +225,13 @@ public static class CliParser
             "webm" => ConversionFormat.WebM,
             _ => null
         };
+}
+
+public abstract record CliScreenshotPointer
+{
+    private CliScreenshotPointer() { }
+
+    public sealed record Excluded : CliScreenshotPointer;
+
+    public sealed record Included : CliScreenshotPointer;
 }

@@ -53,17 +53,20 @@ public sealed class ScreenshotPage : Box
         _selectionButton = Button.NewWithLabel("Selection");
         _selectionButton.AddCssClass("suggested-action");
         _selectionButton.TooltipText = "Select an area to capture";
-        _selectionButton.OnClicked += (_, _) => IntentRaised?.Invoke(new ScreenshotIntent.Capture(CaptureMode.Selection));
+        _selectionButton.OnClicked += (_, _) => IntentRaised?.Invoke(
+            new ScreenshotIntent.Capture(new ScreenshotSource.InteractiveSelection()));
         _modeBox.Append(_selectionButton);
 
         _screenButton = Button.NewWithLabel("Screen");
         _screenButton.TooltipText = "Capture entire screen";
-        _screenButton.OnClicked += (_, _) => IntentRaised?.Invoke(new ScreenshotIntent.Capture(CaptureMode.Screen));
+        _screenButton.OnClicked += (_, _) => IntentRaised?.Invoke(
+            new ScreenshotIntent.Capture(new ScreenshotSource.FullScreen()));
         _modeBox.Append(_screenButton);
 
         _windowButton = Button.NewWithLabel("Window");
         _windowButton.TooltipText = "Capture active window";
-        _windowButton.OnClicked += (_, _) => IntentRaised?.Invoke(new ScreenshotIntent.Capture(CaptureMode.Window));
+        _windowButton.OnClicked += (_, _) => IntentRaised?.Invoke(
+            new ScreenshotIntent.Capture(new ScreenshotSource.ActiveWindow()));
         _modeBox.Append(_windowButton);
 
         Append(_modeBox);
@@ -123,15 +126,18 @@ public sealed class ScreenshotPage : Box
         Render(new ScreenshotViewState.Idle());
     }
 
-    public ScreenshotOptions ReadOptions(CaptureMode mode)
+    public ScreenshotPointer ReadPointer(ScreenshotSource source)
     {
-        var pointer = _showPointerCheck.Active
-            ? mode == CaptureMode.Selection && WindowPositioner.GetPointerPosition() is { } position
-                ? new PointerCapture.FrozenAt(position.X, position.Y)
-                : new PointerCapture.Live()
-            : (PointerCapture)new PointerCapture.Excluded();
+        if (!_showPointerCheck.Active)
+            return new ScreenshotPointer.Excluded();
 
-        return new ScreenshotOptions(mode, pointer, ScreenshotOutputTarget.Default);
+        if (source is ScreenshotSource.InteractiveSelection &&
+            WindowPositioner.GetPointerPosition() is { } position)
+        {
+            return new ScreenshotPointer.FrozenAt(new ScreenPoint(position.X, position.Y));
+        }
+
+        return new ScreenshotPointer.Live();
     }
 
     public void Render(ScreenshotViewState state)
@@ -140,13 +146,7 @@ public sealed class ScreenshotPage : Box
         {
             ScreenshotViewState.Idle => ("Choose a capture mode", true, false, false),
             ScreenshotViewState.Selecting => ("Click and drag to select area...", false, false, false),
-            ScreenshotViewState.Capturing capturing => ($"Capturing {capturing.Mode switch
-            {
-                CaptureMode.Selection => "selection",
-                CaptureMode.Screen => "screen",
-                CaptureMode.Window => "window",
-                _ => throw new InvalidOperationException($"Unhandled capture mode: {capturing.Mode}")
-            }}...", false, false, false),
+            ScreenshotViewState.Capturing capturing => ($"Capturing {DescribeSource(capturing.Source)}...", false, false, false),
             ScreenshotViewState.Saved captured => ($"Saved: {Path.GetFileName(captured.Media.Path)} ({captured.Region.Width}x{captured.Region.Height})", false, true, true),
             ScreenshotViewState.Error error => ($"Error: {error.Message}", true, false, false),
             _ => throw new InvalidOperationException($"Unhandled state: {state.GetType().Name}")
@@ -188,17 +188,17 @@ public sealed class ScreenshotPage : Box
         {
             case 's':
             case 'S':
-                IntentRaised?.Invoke(new ScreenshotIntent.Capture(CaptureMode.Selection));
+                IntentRaised?.Invoke(new ScreenshotIntent.Capture(new ScreenshotSource.InteractiveSelection()));
                 return true;
 
             case 'c':
             case 'C':
-                IntentRaised?.Invoke(new ScreenshotIntent.Capture(CaptureMode.Screen));
+                IntentRaised?.Invoke(new ScreenshotIntent.Capture(new ScreenshotSource.FullScreen()));
                 return true;
 
             case 'w':
             case 'W':
-                IntentRaised?.Invoke(new ScreenshotIntent.Capture(CaptureMode.Window));
+                IntentRaised?.Invoke(new ScreenshotIntent.Capture(new ScreenshotSource.ActiveWindow()));
                 return true;
 
             case 'p':
@@ -220,6 +220,16 @@ public sealed class ScreenshotPage : Box
             _previewPicture.SetPaintable(texture);
         }
     }
+
+    private static string DescribeSource(ScreenshotSource source) =>
+        source switch
+        {
+            ScreenshotSource.SelectedRegion => "selection",
+            ScreenshotSource.InteractiveSelection => "selection",
+            ScreenshotSource.FullScreen => "screen",
+            ScreenshotSource.ActiveWindow => "window",
+            _ => throw new InvalidOperationException($"Unhandled screenshot source: {source.GetType().Name}")
+        };
 
     private void InstallPreviewDrag(SavedMedia media, Gdk.Texture texture)
     {
