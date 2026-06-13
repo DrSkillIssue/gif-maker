@@ -6,8 +6,10 @@ namespace GifMaker.X11;
 internal static partial class X11Native
 {
     private const string LibX11 = "libX11.so.6";
+    private const string LibXfixes = "libXfixes.so.3";
     private const string LibGtkGdk = "libgtk-4.so.1";
 
+    internal const int ZPixmap = 2;
     internal const uint KeyPressMask = 1u << 0;
     internal const int GrabModeAsync = 1;
     internal const int KeyPress = 2;
@@ -101,6 +103,26 @@ internal static partial class X11Native
     [LibraryImport(LibX11)]
     internal static partial int XKeysymToKeycode(nint display, nint keysym);
 
+    [LibraryImport(LibX11)]
+    internal static partial nint XGetImage(
+        nint display,
+        nint drawable,
+        int x,
+        int y,
+        uint width,
+        uint height,
+        nuint planeMask,
+        int format);
+
+    [LibraryImport(LibX11)]
+    internal static partial int XDestroyImage(nint image);
+
+    [LibraryImport(LibX11)]
+    internal static partial int XFree(nint data);
+
+    [LibraryImport(LibXfixes)]
+    internal static partial nint XFixesGetCursorImage(nint display);
+
     [LibraryImport(LibGtkGdk, EntryPoint = "gdk_x11_surface_get_xid")]
     internal static partial nuint GdkX11SurfaceGetXid(nint surface);
 }
@@ -149,6 +171,41 @@ internal struct PollFd
     public int Fd;
     public short Events;
     public short Revents;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal readonly struct XImage
+{
+    public readonly int Width;
+    public readonly int Height;
+    public readonly int XOffset;
+    public readonly int Format;
+    public readonly nint Data;
+    public readonly int ByteOrder;
+    public readonly int BitmapUnit;
+    public readonly int BitmapBitOrder;
+    public readonly int BitmapPad;
+    public readonly int Depth;
+    public readonly int BytesPerLine;
+    public readonly int BitsPerPixel;
+    public readonly nuint RedMask;
+    public readonly nuint GreenMask;
+    public readonly nuint BlueMask;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal readonly struct XFixesCursorImage
+{
+    public readonly short X;
+    public readonly short Y;
+    public readonly ushort Width;
+    public readonly ushort Height;
+    public readonly ushort XHot;
+    public readonly ushort YHot;
+    public readonly nuint CursorSerial;
+    public readonly nint Pixels;
+    public readonly nint Atom;
+    public readonly nint Name;
 }
 
 internal sealed class XDisplayHandle : SafeHandle

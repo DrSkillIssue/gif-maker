@@ -6,6 +6,12 @@ using GifMaker.Cli;
 [assembly: SupportedOSPlatform("linux")]
 
 var cliArgs = CliParser.Parse(args);
+if (cliArgs is CliArgs.Gui)
+    GtkProcessEnvironment.PreferCairoRendererOnX11();
+
+Cairo.Module.Initialize();
+GdkPixbuf.Module.Initialize();
+Gdk.Module.Initialize();
 
 // Handle CLI commands directly (no GUI)
 if (cliArgs is not CliArgs.Gui)
@@ -14,7 +20,6 @@ if (cliArgs is not CliArgs.Gui)
 }
 
 // Launch GUI
-GtkProcessEnvironment.PreferCairoRendererOnX11();
 var app = GifMakerApp.Create();
 return app.Run();
 

@@ -1,4 +1,5 @@
 using GifMaker.Conversion;
+using GifMaker.Core;
 using GifMaker.Screenshot;
 
 namespace GifMaker.Cli;
@@ -22,7 +23,7 @@ public abstract record CliArgs
     /// <summary>Take screenshot and exit.</summary>
     public sealed record Screenshot(
         CliScreenshotMode Mode,
-        CliScreenshotPointer Pointer,
+        ScreenPointerCapture Pointer,
         ScreenshotDestination Destination) : CliArgs;
 
     /// <summary>Start recording (requires stop signal).</summary>
@@ -109,7 +110,7 @@ public static class CliParser
     private static CliArgs ParseScreenshot(ReadOnlySpan<string> args)
     {
         var mode = CliScreenshotMode.Selection;
-        var pointer = CliScreenshotPointer.Excluded;
+        var pointer = ScreenPointerCapture.Excluded;
         var destination = ScreenshotDestination.Default;
 
         for (var i = 0; i < args.Length; i++)
@@ -129,7 +130,7 @@ public static class CliParser
                     break;
 
                 case "-p" or "--pointer":
-                    pointer = CliScreenshotPointer.Included;
+                    pointer = ScreenPointerCapture.Included;
                     break;
 
                 case "-o" or "--output":
@@ -232,10 +233,4 @@ public enum CliScreenshotMode
     Selection,
     Screen,
     Window
-}
-
-public enum CliScreenshotPointer
-{
-    Excluded,
-    Included
 }

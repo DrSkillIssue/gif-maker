@@ -93,7 +93,6 @@ src/
   RecordingException.cs
  Screenshot/
   ActiveWindowRegionReader.cs
-  FfmpegScreenshotCapture.cs
   ScreenshotFiles.cs
   ScreenshotModel.cs
   ScreenshotService.cs

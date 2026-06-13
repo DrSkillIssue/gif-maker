@@ -73,9 +73,9 @@ public abstract record ScreenshotIntent
 {
     private ScreenshotIntent() { }
 
-    public sealed record CaptureSelection(bool IncludePointer) : ScreenshotIntent;
-    public sealed record CaptureScreen(bool IncludePointer) : ScreenshotIntent;
-    public sealed record CaptureWindow(bool IncludePointer) : ScreenshotIntent;
+    public sealed record CaptureSelection(ScreenPointerCapture Pointer) : ScreenshotIntent;
+    public sealed record CaptureScreen(ScreenPointerCapture Pointer) : ScreenshotIntent;
+    public sealed record CaptureWindow(ScreenPointerCapture Pointer) : ScreenshotIntent;
     public sealed record OpenSaved : ScreenshotIntent;
     public sealed record OpenContainingFolder : ScreenshotIntent;
     public sealed record CopySaved : ScreenshotIntent;

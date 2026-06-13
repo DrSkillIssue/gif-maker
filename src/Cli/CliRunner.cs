@@ -53,12 +53,6 @@ public static class CliRunner
     private static async Task<int> RunScreenshotAsync(CliArgs.Screenshot args, CancellationToken ct)
     {
         var service = new ScreenshotService();
-        ScreenshotPointer pointer = args.Pointer switch
-        {
-            CliScreenshotPointer.Excluded => ScreenshotPointer.Excluded,
-            CliScreenshotPointer.Included => ScreenshotPointer.Included,
-            _ => throw new InvalidOperationException($"Unhandled screenshot pointer: {args.Pointer}")
-        };
 
         Console.WriteLine($"Screenshot mode: {DescribeMode(args.Mode)}");
 
@@ -85,15 +79,15 @@ public static class CliRunner
             }
 
             result = await service.CaptureAsync(
-                new ScreenshotCapture.Area(regionResult.GetValueOrThrow(), pointer, args.Destination),
+                new ScreenshotCapture.Area(regionResult.GetValueOrThrow(), args.Pointer, args.Destination),
                 ct).ConfigureAwait(false);
         }
         else
         {
             ScreenshotCapture capture = args.Mode switch
             {
-                CliScreenshotMode.Screen => new ScreenshotCapture.FullScreen(pointer, args.Destination),
-                CliScreenshotMode.Window => new ScreenshotCapture.ActiveWindow(pointer, args.Destination),
+                CliScreenshotMode.Screen => new ScreenshotCapture.FullScreen(args.Pointer, args.Destination),
+                CliScreenshotMode.Window => new ScreenshotCapture.ActiveWindow(args.Pointer, args.Destination),
                 _ => throw new InvalidOperationException($"Unhandled screenshot mode: {args.Mode}")
             };
             result = await service.CaptureAsync(capture, ct).ConfigureAwait(false);

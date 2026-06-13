@@ -10,8 +10,10 @@ namespace GifMaker.Screenshot;
 [SupportedOSPlatform("linux")]
 public sealed class ScreenshotService
 {
+    private static readonly string[] PngOptionKeys = ["compression"];
+    private static readonly string[] PngOptionValues = ["1"];
+
     private readonly ScreenshotFiles _files;
-    private readonly FfmpegScreenshotCapture _capture;
     private readonly ActiveWindowRegionReader _activeWindow;
     private readonly X11Desktop _desktop;
 
@@ -21,7 +23,6 @@ public sealed class ScreenshotService
     {
         var runner = processRunner ?? ProcessRunner.Default;
         _files = files ?? new ScreenshotFiles();
-        _capture = new FfmpegScreenshotCapture(runner);
         _activeWindow = new ActiveWindowRegionReader(runner);
         _desktop = new X11Desktop();
     }
@@ -47,50 +48,40 @@ public sealed class ScreenshotService
                 _ => throw new InvalidOperationException("Unreachable result state"),
                 Result<CapturedScreenshot>.Fail);
 
-        var destination = capture switch
-        {
-            ScreenshotCapture.Area area => area.Destination,
-            ScreenshotCapture.FullScreen screen => screen.Destination,
-            ScreenshotCapture.ActiveWindow window => window.Destination,
-            _ => throw new InvalidOperationException($"Unknown screenshot capture: {capture.GetType().Name}")
-        };
-
-        var fileResult = _files.Reserve(destination);
+        var fileResult = _files.Reserve(capture.Destination);
         if (!fileResult.IsSuccess)
             return fileResult.Match(
                 _ => throw new InvalidOperationException("Unreachable result state"),
                 Result<CapturedScreenshot>.Fail);
 
-        var pointer = capture switch
-        {
-            ScreenshotCapture.Area area => area.Pointer,
-            ScreenshotCapture.FullScreen screen => screen.Pointer,
-            ScreenshotCapture.ActiveWindow window => window.Pointer,
-            _ => throw new InvalidOperationException($"Unknown screenshot capture: {capture.GetType().Name}")
-        };
-
         var region = regionResult.GetValueOrThrow();
         var file = fileResult.GetValueOrThrow();
-        var displayResult = X11DisplayName.Current();
-        if (!displayResult.IsSuccess)
-            return displayResult.Match(
+        var imageResult = await Task.Run(
+            () => _desktop.CaptureRootImage(region, capture.Pointer),
+            ct).ConfigureAwait(false);
+        if (!imageResult.IsSuccess)
+            return imageResult.Match(
                 _ => throw new InvalidOperationException("Unreachable result state"),
                 Result<CapturedScreenshot>.Fail);
 
-        var frame = new ResolvedScreenshotFrame(
-            region,
-            pointer,
-            file,
-            displayResult.GetValueOrThrow());
+        using var image = imageResult.GetValueOrThrow();
+        try
+        {
+            image.Flush();
+            using var pixbuf = Gdk.Functions.PixbufGetFromSurface(image, 0, 0, image.Width, image.Height);
+            if (pixbuf is null || !pixbuf.Savev(file.Path, "png", PngOptionKeys, PngOptionValues))
+                return Result<CapturedScreenshot>.Fail("Failed to save screenshot");
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            return Result<CapturedScreenshot>.Fail($"Failed to save screenshot: {ex.Message}");
+        }
 
-        var captureResult = await _capture.CaptureAsync(frame, ct).ConfigureAwait(false);
-        return captureResult.Match(
-            capturedFile => Result<CapturedScreenshot>.Ok(new CapturedScreenshot(capturedFile, region)),
-            Result<CapturedScreenshot>.Fail);
+        return Result<CapturedScreenshot>.Ok(new CapturedScreenshot(file, region));
     }
 
     public async Task<Result<FrozenScreenshot>> FreezeScreenAsync(
-        ScreenshotPointer pointer,
+        ScreenPointerCapture pointer,
         CancellationToken ct = default)
     {
         var screenResult = _desktop.GetScreenSize().Match(
@@ -101,57 +92,13 @@ public sealed class ScreenshotService
                 _ => throw new InvalidOperationException("Unreachable result state"),
                 Result<FrozenScreenshot>.Fail);
 
-        var fileResult = _files.ReserveTemporary();
-        if (!fileResult.IsSuccess)
-            return fileResult.Match(
-                _ => throw new InvalidOperationException("Unreachable result state"),
-                Result<FrozenScreenshot>.Fail);
-
-        var displayResult = X11DisplayName.Current();
-        if (!displayResult.IsSuccess)
-            return displayResult.Match(
-                _ => throw new InvalidOperationException("Unreachable result state"),
-                Result<FrozenScreenshot>.Fail);
-
         var bounds = screenResult.GetValueOrThrow();
-        var file = fileResult.GetValueOrThrow();
-        var frame = new ResolvedScreenshotFrame(
-            bounds,
-            pointer,
-            file,
-            displayResult.GetValueOrThrow());
-
-        var captureResult = await _capture.CaptureAsync(frame, ct).ConfigureAwait(false);
-        if (!captureResult.IsSuccess)
-        {
-            try { System.IO.File.Delete(file.Path); }
-            catch (Exception deleteEx) when (deleteEx is IOException or UnauthorizedAccessException) { }
-
-            return captureResult.Match(
-                _ => throw new InvalidOperationException("Unreachable result state"),
-                Result<FrozenScreenshot>.Fail);
-        }
-
-        try
-        {
-            var image = GdkPixbuf.Pixbuf.NewFromFile(file.Path);
-            if (image is null)
-            {
-                try { System.IO.File.Delete(file.Path); }
-                catch (Exception deleteEx) when (deleteEx is IOException or UnauthorizedAccessException) { }
-
-                return Result<FrozenScreenshot>.Fail("Failed to load frozen screenshot");
-            }
-
-            return Result<FrozenScreenshot>.Ok(new FrozenScreenshot(file, bounds, image));
-        }
-        catch (Exception ex) when (ex is not OutOfMemoryException)
-        {
-            try { System.IO.File.Delete(file.Path); }
-            catch (Exception deleteEx) when (deleteEx is IOException or UnauthorizedAccessException) { }
-
-            return Result<FrozenScreenshot>.Fail($"Failed to load frozen screenshot: {ex.Message}");
-        }
+        var imageResult = await Task.Run(
+            () => _desktop.CaptureRootImage(bounds, pointer),
+            ct).ConfigureAwait(false);
+        return imageResult.Match(
+            image => Result<FrozenScreenshot>.Ok(new FrozenScreenshot(bounds, image)),
+            Result<FrozenScreenshot>.Fail);
     }
 
     public Result<CapturedScreenshot> Crop(FrozenScreenshotCrop crop)
@@ -178,13 +125,15 @@ public sealed class ScreenshotService
         var file = fileResult.GetValueOrThrow();
         try
         {
-            using var cropped = crop.Frame.Image.NewSubpixbuf(
+            crop.Frame.Image.Flush();
+            using var pixbuf = Gdk.Functions.PixbufGetFromSurface(
+                crop.Frame.Image,
                 cropX,
                 cropY,
                 crop.Region.Width,
                 crop.Region.Height);
-            if (!cropped.Savev(file.Path, "png", [], []))
-                return Result<CapturedScreenshot>.Fail("Failed to save cropped screenshot");
+            if (pixbuf is null || !pixbuf.Savev(file.Path, "png", PngOptionKeys, PngOptionValues))
+                return Result<CapturedScreenshot>.Fail("Failed to crop screenshot");
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {

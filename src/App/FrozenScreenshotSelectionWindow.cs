@@ -151,7 +151,7 @@ internal sealed class FrozenScreenshotSelectionWindow : Window
         cr.Save();
         cr.Rectangle(rect.X, rect.Y, rect.Width, rect.Height);
         cr.Clip();
-        Gdk.Functions.CairoSetSourcePixbuf(cr, _frame.Image, 0, 0);
+        cr.SetSourceSurface(_frame.Image, 0, 0);
         cr.Paint();
         cr.Restore();
 

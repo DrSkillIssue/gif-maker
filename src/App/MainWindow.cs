@@ -81,7 +81,7 @@ public sealed class MainWindow : Window
     }
 
     public void CaptureSelection() =>
-        _ = HandleScreenshotIntentAsync(new ScreenshotIntent.CaptureSelection(_screenshotPage.IncludePointer));
+        _ = HandleScreenshotIntentAsync(new ScreenshotIntent.CaptureSelection(_screenshotPage.PointerCapture));
 
     public WindowVisibilityLease HideForExternalSelection()
     {
@@ -184,15 +184,15 @@ public sealed class MainWindow : Window
             switch (intent)
             {
                 case ScreenshotIntent.CaptureSelection selection:
-                    await CaptureScreenshotSelectionAsync(selection.IncludePointer);
+                    await CaptureScreenshotSelectionAsync(selection.Pointer);
                     break;
 
                 case ScreenshotIntent.CaptureScreen screen:
-                    await CaptureScreenAsync(screen.IncludePointer);
+                    await CaptureScreenAsync(screen.Pointer);
                     break;
 
                 case ScreenshotIntent.CaptureWindow window:
-                    await CaptureWindowAsync(window.IncludePointer);
+                    await CaptureWindowAsync(window.Pointer);
                     break;
 
                 case ScreenshotIntent.OpenSaved:
@@ -237,7 +237,7 @@ public sealed class MainWindow : Window
         }
     }
 
-    private async Task CaptureScreenshotSelectionAsync(bool includePointer)
+    private async Task CaptureScreenshotSelectionAsync(ScreenPointerCapture pointer)
     {
         if (_screenshotState is ScreenshotViewState.Selecting or ScreenshotViewState.Capturing)
             return;
@@ -246,7 +246,7 @@ public sealed class MainWindow : Window
 
         var session = _screenshotSession ??= _services.CreateScreenshotSession();
         var result = await session.CaptureSelectionAsync(
-            includePointer ? ScreenshotPointer.Included : ScreenshotPointer.Excluded,
+            pointer,
             HideForExternalSelection());
         result.Match(
             RenderScreenshot,
@@ -260,7 +260,7 @@ public sealed class MainWindow : Window
         }
     }
 
-    private async Task CaptureScreenAsync(bool includePointer)
+    private async Task CaptureScreenAsync(ScreenPointerCapture pointer)
     {
         if (_screenshotState is ScreenshotViewState.Selecting or ScreenshotViewState.Capturing)
             return;
@@ -269,7 +269,7 @@ public sealed class MainWindow : Window
 
         var session = _screenshotSession ??= _services.CreateScreenshotSession();
         var capture = new ScreenshotCapture.FullScreen(
-            includePointer ? ScreenshotPointer.Included : ScreenshotPointer.Excluded,
+            pointer,
             ScreenshotDestination.Default);
         var result = await session.CaptureAsync(capture);
         result.Match(
@@ -284,7 +284,7 @@ public sealed class MainWindow : Window
         }
     }
 
-    private async Task CaptureWindowAsync(bool includePointer)
+    private async Task CaptureWindowAsync(ScreenPointerCapture pointer)
     {
         if (_screenshotState is ScreenshotViewState.Selecting or ScreenshotViewState.Capturing)
             return;
@@ -293,7 +293,7 @@ public sealed class MainWindow : Window
 
         var session = _screenshotSession ??= _services.CreateScreenshotSession();
         var capture = new ScreenshotCapture.ActiveWindow(
-            includePointer ? ScreenshotPointer.Included : ScreenshotPointer.Excluded,
+            pointer,
             ScreenshotDestination.Default);
         var result = await session.CaptureAsync(capture);
         result.Match(

@@ -34,7 +34,7 @@ public sealed class ScreenshotSession
     }
 
     public async Task<Result<ScreenshotViewState>> CaptureSelectionAsync(
-        ScreenshotPointer pointer,
+        ScreenPointerCapture pointer,
         WindowVisibilityLease visibility,
         CancellationToken ct = default)
     {

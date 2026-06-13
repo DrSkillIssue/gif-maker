@@ -32,7 +32,8 @@ public sealed class ScreenshotPage : Box
 
     public event Action<ScreenshotIntent>? IntentRaised;
 
-    public bool IncludePointer => _showPointerCheck.Active;
+    public ScreenPointerCapture PointerCapture =>
+        _showPointerCheck.Active ? ScreenPointerCapture.Included : ScreenPointerCapture.Excluded;
 
     public ScreenshotPage()
     {
@@ -56,19 +57,19 @@ public sealed class ScreenshotPage : Box
         _selectionButton.AddCssClass("suggested-action");
         _selectionButton.TooltipText = "Select an area to capture";
         _selectionButton.OnClicked += (_, _) => IntentRaised?.Invoke(
-            new ScreenshotIntent.CaptureSelection(IncludePointer));
+            new ScreenshotIntent.CaptureSelection(PointerCapture));
         _modeBox.Append(_selectionButton);
 
         _screenButton = Button.NewWithLabel("Screen");
         _screenButton.TooltipText = "Capture entire screen";
         _screenButton.OnClicked += (_, _) => IntentRaised?.Invoke(
-            new ScreenshotIntent.CaptureScreen(IncludePointer));
+            new ScreenshotIntent.CaptureScreen(PointerCapture));
         _modeBox.Append(_screenButton);
 
         _windowButton = Button.NewWithLabel("Window");
         _windowButton.TooltipText = "Capture active window";
         _windowButton.OnClicked += (_, _) => IntentRaised?.Invoke(
-            new ScreenshotIntent.CaptureWindow(IncludePointer));
+            new ScreenshotIntent.CaptureWindow(PointerCapture));
         _modeBox.Append(_windowButton);
 
         Append(_modeBox);
@@ -176,17 +177,17 @@ public sealed class ScreenshotPage : Box
         {
             case 's':
             case 'S':
-                IntentRaised?.Invoke(new ScreenshotIntent.CaptureSelection(IncludePointer));
+                IntentRaised?.Invoke(new ScreenshotIntent.CaptureSelection(PointerCapture));
                 return true;
 
             case 'c':
             case 'C':
-                IntentRaised?.Invoke(new ScreenshotIntent.CaptureScreen(IncludePointer));
+                IntentRaised?.Invoke(new ScreenshotIntent.CaptureScreen(PointerCapture));
                 return true;
 
             case 'w':
             case 'W':
-                IntentRaised?.Invoke(new ScreenshotIntent.CaptureWindow(IncludePointer));
+                IntentRaised?.Invoke(new ScreenshotIntent.CaptureWindow(PointerCapture));
                 return true;
 
             case 'p':
