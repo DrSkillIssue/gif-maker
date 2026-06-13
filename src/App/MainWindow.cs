@@ -1,6 +1,7 @@
 using System.Runtime.Versioning;
 using Gtk;
 using GifMaker.Core;
+using GifMaker.Screenshot;
 using GifMaker.X11;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -8,72 +9,292 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace GifMaker.App;
 
 /// <summary>
-/// Main application window with tabbed interface for Record and Screenshot.
-/// Single window design - no popup windows, all results shown inline.
+/// Main application window with tabbed Record and Screenshot surfaces.
 /// </summary>
 [SupportedOSPlatform("linux")]
 public sealed class MainWindow : Window
 {
     private const int WindowWidth = 420;
     private const int WindowHeight = 350;
+    private const int MaxStatusLength = 80;
 
-    private readonly Application _app;
+    private readonly AppServices _services;
     private readonly ILogger<MainWindow> _logger;
-    private readonly IProcessRunner _processRunner;
-
     private readonly Stack _stack;
     private readonly RecordPage _recordPage;
     private readonly ScreenshotPage _screenshotPage;
 
+    private RecordingSession? _recordingSession;
+    private ScreenshotSession? _screenshotSession;
+    private RecordViewState _recordState = new RecordViewState.Idle();
+    private ScreenshotViewState _screenshotState = new ScreenshotViewState.Idle();
     private (int X, int Y)? _savedPosition;
 
-    /// <summary>
-    /// Creates the main application window.
-    /// </summary>
-    public MainWindow(
+    internal MainWindow(
         Application app,
-        ILogger<MainWindow>? logger = null,
-        IProcessRunner? processRunner = null)
+        AppServices services,
+        ILogger<MainWindow>? logger = null)
     {
-        _app = app;
+        _services = services;
         _logger = logger ?? NullLogger<MainWindow>.Instance;
-        _processRunner = processRunner ?? ProcessRunner.Default;
 
         Application = app;
         Title = "GIF Maker";
         SetDefaultSize(WindowWidth, WindowHeight);
         Resizable = true;
 
-        // Header bar with tab switcher
         var headerBar = HeaderBar.New();
         var stackSwitcher = StackSwitcher.New();
         headerBar.SetTitleWidget(stackSwitcher);
         SetTitlebar(headerBar);
 
-        // Stack for tab content
         _stack = Stack.New();
         _stack.SetTransitionType(StackTransitionType.SlideLeftRight);
         _stack.SetTransitionDuration(200);
         stackSwitcher.SetStack(_stack);
 
-        // Create pages (each manages its own typed logger)
-        _recordPage = new RecordPage(logger: null, _processRunner);
-        _screenshotPage = new ScreenshotPage(logger: null, _processRunner);
+        _recordPage = new RecordPage();
+        _screenshotPage = new ScreenshotPage();
+        _recordPage.IntentRaised += intent => _ = HandleRecordIntentAsync(intent);
+        _screenshotPage.IntentRaised += intent => _ = HandleScreenshotIntentAsync(intent);
 
         _stack.AddTitled(_recordPage, "record", "Record");
         _stack.AddTitled(_screenshotPage, "screenshot", "Screenshot");
-
         Child = _stack;
 
-        // Center on screen when shown
         OnShow += OnWindowShown;
+        OnDestroy += (_, _) => DisposeOwnedState();
+    }
 
-        // Cleanup pages when window is destroyed
-        OnDestroy += (_, _) =>
+    public void Render(AppViewState state)
+    {
+        if (state is not AppViewState.ActiveTab active)
+            throw new InvalidOperationException($"Unhandled app view state: {state.GetType().Name}");
+
+        _stack.SetVisibleChildName(active.Tab switch
         {
-            _recordPage.Cleanup();
-            _screenshotPage.Cleanup();
-        };
+            AppTab.Record => "record",
+            AppTab.Screenshot => "screenshot",
+            _ => throw new InvalidOperationException($"Unhandled app tab: {active.Tab}")
+        });
+    }
+
+    public void CaptureSelection() =>
+        _ = HandleScreenshotIntentAsync(new ScreenshotIntent.Capture(CaptureMode.Selection));
+
+    public WindowVisibilityLease HideForExternalSelection()
+    {
+        var surface = GetSurface();
+        if (surface is not null)
+        {
+            var position = WindowPositioner.GetWindowPosition(surface);
+            if (position.HasValue)
+                _savedPosition = position.Value;
+        }
+
+        Hide();
+        return new WindowVisibilityLease(RestoreAfterExternalSelection);
+    }
+
+    private async Task HandleRecordIntentAsync(RecordIntent intent)
+    {
+        try
+        {
+            switch (intent)
+            {
+                case RecordIntent.SelectRegion:
+                    await SelectRecordingRegionAsync();
+                    break;
+
+                case RecordIntent.ToggleRecording:
+                    await ToggleRecordingAsync();
+                    break;
+
+                case RecordIntent.CancelConversion:
+                    _recordingSession?.CancelConversion();
+                    break;
+
+                case RecordIntent.OpenSaved:
+                    if (_recordState is RecordViewState.Saved openRecording)
+                    {
+                        _services.DesktopFiles.Open(openRecording.Media).Match(
+                            _ => { },
+                            error => RenderRecord(new RecordViewState.Error(error)));
+                    }
+                    break;
+
+                case RecordIntent.CopySaved:
+                    if (_recordState is RecordViewState.Saved copiedRecording)
+                    {
+                        _services.DesktopFiles.CopyToClipboard(this, copiedRecording.Media).Match(
+                            _ => { },
+                            error => RenderRecord(new RecordViewState.Error(error)));
+                    }
+                    break;
+
+                default:
+                    throw new InvalidOperationException($"Unhandled record intent: {intent.GetType().Name}");
+            }
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            _logger.LogError(ex, "Record workflow failed");
+            RenderRecord(new RecordViewState.Error(Truncate(ex.Message)));
+        }
+    }
+
+    private async Task SelectRecordingRegionAsync()
+    {
+        if (_recordState is RecordViewState.Recording or RecordViewState.Stopping or RecordViewState.Converting)
+            return;
+
+        RenderRecord(new RecordViewState.Selecting());
+        var session = _recordingSession ??= _services.CreateRecordingSession();
+        var result = await session.SelectRegionAsync(HideForExternalSelection());
+        result.Match(
+            RenderRecord,
+            error => RenderRecord(new RecordViewState.Error(Truncate(error))));
+    }
+
+    private async Task ToggleRecordingAsync()
+    {
+        switch (_recordState)
+        {
+            case RecordViewState.Ready:
+                var startSession = _recordingSession ??= _services.CreateRecordingSession();
+                startSession.Start(_recordPage.ReadStartOptions()).Match(
+                    RenderRecord,
+                    error => RenderRecord(new RecordViewState.Error(Truncate(error))));
+                break;
+
+            case RecordViewState.Recording recording:
+                if (_recordingSession is null)
+                {
+                    RenderRecord(new RecordViewState.Error("No recording in progress"));
+                    break;
+                }
+
+                RenderRecord(new RecordViewState.Stopping(recording.Fps));
+                RenderRecord(new RecordViewState.Converting());
+                var result = await _recordingSession.StopAndConvertAsync(_recordPage.ReadExportTarget());
+                result.Match(
+                    RenderRecord,
+                    error => RenderRecord(new RecordViewState.Error(Truncate(error))));
+                break;
+
+            case RecordViewState.Saved:
+            case RecordViewState.Error:
+                ResetRecording();
+                break;
+        }
+    }
+
+    private async Task HandleScreenshotIntentAsync(ScreenshotIntent intent)
+    {
+        try
+        {
+            switch (intent)
+            {
+                case ScreenshotIntent.Capture capture:
+                    await CaptureScreenshotAsync(capture.Mode);
+                    break;
+
+                case ScreenshotIntent.OpenSaved:
+                    if (_screenshotState is ScreenshotViewState.Saved openScreenshot)
+                    {
+                        _services.DesktopFiles.Open(openScreenshot.Media).Match(
+                            _ => { },
+                            error => RenderScreenshot(new ScreenshotViewState.Error(error)));
+                    }
+                    break;
+
+                case ScreenshotIntent.OpenContainingFolder:
+                    if (_screenshotState is ScreenshotViewState.Saved screenshotFolder)
+                    {
+                        _services.DesktopFiles.OpenContainingFolder(screenshotFolder.Media).Match(
+                            _ => { },
+                            error => RenderScreenshot(new ScreenshotViewState.Error(error)));
+                    }
+                    break;
+
+                case ScreenshotIntent.CopySaved:
+                    if (_screenshotState is ScreenshotViewState.Saved copiedScreenshot)
+                    {
+                        _services.DesktopFiles.CopyToClipboard(this, copiedScreenshot.Media).Match(
+                            _ => { },
+                            error => RenderScreenshot(new ScreenshotViewState.Error(error)));
+                    }
+                    break;
+
+                case ScreenshotIntent.Reset:
+                    RenderScreenshot(new ScreenshotViewState.Idle());
+                    break;
+
+                default:
+                    throw new InvalidOperationException($"Unhandled screenshot intent: {intent.GetType().Name}");
+            }
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            _logger.LogError(ex, "Screenshot workflow failed");
+            RenderScreenshot(new ScreenshotViewState.Error(Truncate(ex.Message)));
+        }
+    }
+
+    private async Task CaptureScreenshotAsync(CaptureMode mode)
+    {
+        if (_screenshotState is ScreenshotViewState.Selecting or ScreenshotViewState.Capturing)
+            return;
+
+        var options = _screenshotPage.ReadOptions(mode);
+        RenderScreenshot(mode == CaptureMode.Selection
+            ? new ScreenshotViewState.Selecting()
+            : new ScreenshotViewState.Capturing(mode));
+
+        var visibility = mode == CaptureMode.Selection ? HideForExternalSelection() : default;
+        var session = _screenshotSession ??= _services.CreateScreenshotSession();
+        var result = await session.CaptureAsync(options, visibility);
+        result.Match(
+            RenderScreenshot,
+            error => RenderScreenshot(new ScreenshotViewState.Error(Truncate(error))));
+
+        if (_screenshotState is ScreenshotViewState.Saved saved)
+        {
+            var copyResult = _services.DesktopFiles.CopyToClipboard(this, saved.Media);
+            if (copyResult.IsSuccess)
+                _logger.LogInformation("Screenshot copied to clipboard");
+        }
+    }
+
+    private void RenderRecord(RecordViewState state)
+    {
+        _recordState = state;
+        _recordPage.Render(state);
+    }
+
+    private void RenderScreenshot(ScreenshotViewState state)
+    {
+        _screenshotState = state;
+        _screenshotPage.Render(state);
+    }
+
+    private void ResetRecording()
+    {
+        _recordingSession?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        _recordingSession = null;
+        RenderRecord(new RecordViewState.Idle());
+    }
+
+    private void RestoreAfterExternalSelection()
+    {
+        Present();
+
+        if (_savedPosition is { } position)
+        {
+            var surface = GetSurface();
+            if (surface is not null)
+                WindowPositioner.MoveWindow(surface, position.X, position.Y);
+        }
     }
 
     private void OnWindowShown(Widget sender, EventArgs args)
@@ -92,56 +313,15 @@ public sealed class MainWindow : Window
             WindowPositioner.MoveWindow(surface, x, y);
     }
 
-    /// <summary>
-    /// Hides window temporarily (e.g., during area selection).
-    /// Saves position for restoration.
-    /// </summary>
-    public void HideTemporarily()
+    private void DisposeOwnedState()
     {
-        // Save current position before hiding
-        var surface = GetSurface();
-        if (surface is not null)
-        {
-            var pos = WindowPositioner.GetWindowPosition(surface);
-            if (pos.HasValue)
-                _savedPosition = pos.Value;
-        }
-        Hide();
+        _recordingSession?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        _recordingSession = null;
+        _screenshotSession = null;
+        _recordPage.Dispose();
+        _screenshotPage.Dispose();
     }
 
-    /// <summary>
-    /// Shows window after temporary hide.
-    /// Restores to saved position.
-    /// </summary>
-    public void ShowAgain()
-    {
-        Present();
-
-        // Restore position after showing
-        if (_savedPosition is { } pos)
-        {
-            var surface = GetSurface();
-            if (surface is not null)
-                WindowPositioner.MoveWindow(surface, pos.X, pos.Y);
-        }
-    }
-
-    /// <summary>
-    /// Switches to the Record tab.
-    /// </summary>
-    public void SwitchToRecord() => _stack.SetVisibleChildName("record");
-
-    /// <summary>
-    /// Switches to the Screenshot tab.
-    /// </summary>
-    public void SwitchToScreenshot() => _stack.SetVisibleChildName("screenshot");
-
-    /// <summary>
-    /// Switches to Screenshot tab and triggers selection capture.
-    /// </summary>
-    public void TriggerScreenshotSelection()
-    {
-        _stack.SetVisibleChildName("screenshot");
-        _screenshotPage.TriggerSelectionCapture();
-    }
+    private static string Truncate(string message) =>
+        message.Length <= MaxStatusLength ? message : message[..(MaxStatusLength - 3)] + "...";
 }

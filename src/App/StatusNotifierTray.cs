@@ -3,13 +3,46 @@ using System.Runtime.Versioning;
 
 namespace GifMaker.App;
 
+[SupportedOSPlatform("linux")]
+internal sealed class StatusNotifierTray : IDisposable
+{
+    private readonly StatusNotifierItemEndpoint _endpoint;
+    private readonly Action<AppAction> _dispatch;
+
+    public StatusNotifierTray(Gio.Application application, Action<AppAction> dispatch)
+    {
+        ArgumentNullException.ThrowIfNull(dispatch);
+
+        _dispatch = dispatch;
+        var item = new StatusNotifierItem(
+            IconName: "camera-video",
+            Title: "GifMaker",
+            Tooltip: "GifMaker - Screen Recorder");
+
+        _endpoint = new StatusNotifierItemEndpoint(application, item);
+        _endpoint.Activated += OnActivated;
+        _endpoint.SecondaryActivated += OnSecondaryActivated;
+    }
+
+    public void Dispose()
+    {
+        _endpoint.Activated -= OnActivated;
+        _endpoint.SecondaryActivated -= OnSecondaryActivated;
+        _endpoint.Dispose();
+    }
+
+    private void OnActivated() => _dispatch(new AppAction.ShowWindow());
+
+    private void OnSecondaryActivated() => _dispatch(new AppAction.CaptureSelection());
+}
+
+internal sealed record StatusNotifierItem(string IconName, string Title, string Tooltip);
+
 /// <summary>
-/// System tray using StatusNotifierItem D-Bus protocol via P/Invoke.
-/// Works with GNOME, KDE, and other modern Linux desktops.
-/// Uses direct GLib D-Bus calls for proper integration.
+/// StatusNotifierItem D-Bus endpoint.
 /// </summary>
 [SupportedOSPlatform("linux")]
-public sealed partial class StatusNotifierTray : IDisposable
+internal sealed partial class StatusNotifierItemEndpoint : IDisposable
 {
     private const string LibGio = "libgio-2.0.so.0";
     private const string LibGLib = "libglib-2.0.so.0";
@@ -20,94 +53,107 @@ public sealed partial class StatusNotifierTray : IDisposable
     private const string ItemInterface = "org.kde.StatusNotifierItem";
     private const string ObjectPath = "/StatusNotifierItem";
 
+    private readonly StatusNotifierItem _item;
     private readonly nint _connection;
     private readonly uint _registrationId;
     private readonly nint _nodeInfo;
     private readonly nint _vtablePtr;
-    private readonly GCHandle _selfHandle; // prevent GC during D-Bus callbacks
-    private int _disposed;
-
-    private string _iconName = "camera-video";
-    private string _title = "GifMaker";
-    private string _tooltip = "GifMaker - Screen Recorder";
-
-    // prevent GC of delegates
+    private readonly GCHandle _selfHandle;
     private readonly GDBusMethodCallFunc _methodCallFunc;
     private readonly GDBusGetPropertyFunc _getPropertyFunc;
+    private int _disposed;
 
-    /// <summary>Fired when user activates (left-clicks) the tray icon.</summary>
-    public event Action? Activated;
-
-    /// <summary>Fired when user secondary-activates (middle-clicks) the tray icon.</summary>
-    public event Action? SecondaryActivated;
-
-    /// <summary>
-    /// Creates a StatusNotifier tray icon using the application's D-Bus connection.
-    /// </summary>
-    /// <param name="application">The Gio.Application to get the D-Bus connection from.</param>
-    public StatusNotifierTray(Gio.Application application)
+    public StatusNotifierItemEndpoint(
+        Gio.Application application,
+        StatusNotifierItem item)
     {
         ArgumentNullException.ThrowIfNull(application);
+        ArgumentNullException.ThrowIfNull(item);
 
-        // Pin ourselves to prevent GC during D-Bus callbacks
-        _selfHandle = GCHandle.Alloc(this);
-
-        // Get the D-Bus connection from the application - this is the same connection GTK uses
-        // GirCore wraps GObject handles, we need the raw pointer
-        var appHandle = application.Handle.DangerousGetHandle();
-        _connection = g_application_get_dbus_connection(appHandle);
-        if (_connection == nint.Zero)
-        {
-            throw new InvalidOperationException("Application does not have a D-Bus connection. Is it running?");
-        }
-
-        // Keep delegates alive (prevent GC)
+        _item = item;
         _methodCallFunc = OnMethodCall;
         _getPropertyFunc = OnGetProperty;
 
-        // Parse introspection XML
-        nint error;
-        var xml = BuildIntrospectionXml();
-        _nodeInfo = g_dbus_node_info_new_for_xml(xml, out error);
-        if (_nodeInfo == nint.Zero || error != nint.Zero)
+        var selfHandle = default(GCHandle);
+        var connection = nint.Zero;
+        var nodeInfo = nint.Zero;
+        var vtablePtr = nint.Zero;
+        uint registrationId = 0;
+
+        void ReleaseAllocated()
         {
-            FreeErrorAndThrow(error, "Failed to parse D-Bus introspection");
+            if (registrationId != 0 && connection != nint.Zero)
+                g_dbus_connection_unregister_object(connection, registrationId);
+
+            if (vtablePtr != nint.Zero)
+                Marshal.FreeHGlobal(vtablePtr);
+
+            if (nodeInfo != nint.Zero)
+                g_dbus_node_info_unref(nodeInfo);
+
+            if (selfHandle.IsAllocated)
+                selfHandle.Free();
         }
 
-        var interfaceInfo = g_dbus_node_info_lookup_interface(_nodeInfo, ItemInterface);
-        if (interfaceInfo == nint.Zero)
-            throw new InvalidOperationException($"Interface {ItemInterface} not found");
-
-        // Create vtable with method/property handlers
-        var vtable = new GDBusInterfaceVTable
+        try
         {
-            method_call = Marshal.GetFunctionPointerForDelegate(_methodCallFunc),
-            get_property = Marshal.GetFunctionPointerForDelegate(_getPropertyFunc),
-            set_property = nint.Zero
-        };
+            selfHandle = GCHandle.Alloc(this);
 
-        _vtablePtr = Marshal.AllocHGlobal(Marshal.SizeOf<GDBusInterfaceVTable>());
-        Marshal.StructureToPtr(vtable, _vtablePtr, false);
+            var appHandle = application.Handle.DangerousGetHandle();
+            connection = g_application_get_dbus_connection(appHandle);
+            if (connection == nint.Zero)
+                throw new InvalidOperationException("Application does not have a D-Bus connection. Is it running?");
 
-        // Register the D-Bus object
-        _registrationId = g_dbus_connection_register_object(
-            _connection,
-            ObjectPath,
-            interfaceInfo,
-            _vtablePtr,
-            nint.Zero,
-            nint.Zero,
-            out error);
+            nint error;
+            var xml = BuildIntrospectionXml();
+            nodeInfo = g_dbus_node_info_new_for_xml(xml, out error);
+            if (nodeInfo == nint.Zero || error != nint.Zero)
+                FreeErrorAndThrow(error, "Failed to parse D-Bus introspection");
 
-        if (_registrationId == 0 || error != nint.Zero)
-        {
-            Marshal.FreeHGlobal(_vtablePtr);
-            FreeErrorAndThrow(error, "Failed to register D-Bus object");
+            var interfaceInfo = g_dbus_node_info_lookup_interface(nodeInfo, ItemInterface);
+            if (interfaceInfo == nint.Zero)
+                throw new InvalidOperationException($"Interface {ItemInterface} not found");
+
+            var vtable = new GDBusInterfaceVTable
+            {
+                method_call = Marshal.GetFunctionPointerForDelegate(_methodCallFunc),
+                get_property = Marshal.GetFunctionPointerForDelegate(_getPropertyFunc),
+                set_property = nint.Zero
+            };
+
+            vtablePtr = Marshal.AllocHGlobal(Marshal.SizeOf<GDBusInterfaceVTable>());
+            Marshal.StructureToPtr(vtable, vtablePtr, false);
+
+            registrationId = g_dbus_connection_register_object(
+                connection,
+                ObjectPath,
+                interfaceInfo,
+                vtablePtr,
+                nint.Zero,
+                nint.Zero,
+                out error);
+
+            if (registrationId == 0 || error != nint.Zero)
+                FreeErrorAndThrow(error, "Failed to register D-Bus object");
+
+            _connection = connection;
+            _nodeInfo = nodeInfo;
+            _vtablePtr = vtablePtr;
+            _registrationId = registrationId;
+            _selfHandle = selfHandle;
+
+            RegisterWithWatcher();
         }
-
-        // Register with StatusNotifierWatcher
-        RegisterWithWatcher();
+        catch
+        {
+            ReleaseAllocated();
+            throw;
+        }
     }
+
+    public event Action? Activated;
+
+    public event Action? SecondaryActivated;
 
     private static void FreeErrorAndThrow(nint error, string message)
     {
@@ -117,26 +163,22 @@ public sealed partial class StatusNotifierTray : IDisposable
             errorMsg = GetGErrorMessage(error);
             g_error_free(error);
         }
+
         throw new InvalidOperationException(errorMsg ?? message);
     }
 
     private static string? GetGErrorMessage(nint error)
     {
         if (error == nint.Zero) return null;
-        // GError struct: domain (uint32), code (int), message (char*)
-        var messagePtr = Marshal.ReadIntPtr(error, 8); // offset 8 for message pointer on 64-bit
+        var messagePtr = Marshal.ReadIntPtr(error, 8);
         return Marshal.PtrToStringUTF8(messagePtr);
     }
 
     private void RegisterWithWatcher()
     {
-        // Get our unique connection name (e.g. ":1.123")
         var uniqueNamePtr = g_dbus_connection_get_unique_name(_connection);
         var uniqueName = Marshal.PtrToStringUTF8(uniqueNamePtr) ?? "";
-
-        // StatusNotifierWatcher expects "busname/objectpath" format
         var serviceId = $"{uniqueName}{ObjectPath}";
-
         var parameters = g_variant_new_parsed($"('{serviceId}',)");
 
         g_dbus_connection_call(
@@ -146,12 +188,12 @@ public sealed partial class StatusNotifierTray : IDisposable
             WatcherInterface,
             "RegisterStatusNotifierItem",
             parameters,
-            nint.Zero, // No reply type
-            0, // DBusCallFlags.None
-            -1, // Default timeout
-            nint.Zero, // No cancellable
-            nint.Zero, // No callback
-            nint.Zero); // No user data
+            nint.Zero,
+            0,
+            -1,
+            nint.Zero,
+            nint.Zero,
+            nint.Zero);
     }
 
     private static string BuildIntrospectionXml() => """
@@ -206,20 +248,17 @@ public sealed partial class StatusNotifierTray : IDisposable
         switch (method)
         {
             case "Activate":
-                GLib.Functions.IdleAdd(0, () => { Activated?.Invoke(); return false; });
+                RaiseActivated();
                 g_dbus_method_invocation_return_value(invocation, nint.Zero);
                 break;
 
             case "SecondaryActivate":
-                GLib.Functions.IdleAdd(0, () => { SecondaryActivated?.Invoke(); return false; });
+                RaiseSecondaryActivated();
                 g_dbus_method_invocation_return_value(invocation, nint.Zero);
                 break;
 
             case "ContextMenu":
             case "Scroll":
-                g_dbus_method_invocation_return_value(invocation, nint.Zero);
-                break;
-
             default:
                 g_dbus_method_invocation_return_value(invocation, nint.Zero);
                 break;
@@ -232,10 +271,9 @@ public sealed partial class StatusNotifierTray : IDisposable
         nint objectPath,
         nint interfaceName,
         nint propertyName,
-        nint errorPtr, // GError** - we'd write *errorPtr = NULL on success, but we never fail
+        nint errorPtr,
         nint userData)
     {
-        // Set *error to NULL to indicate no error
         if (errorPtr != nint.Zero)
             Marshal.WriteIntPtr(errorPtr, nint.Zero);
 
@@ -248,9 +286,9 @@ public sealed partial class StatusNotifierTray : IDisposable
         {
             "Category" => g_variant_new_string("ApplicationStatus"),
             "Id" => g_variant_new_string("gifmaker"),
-            "Title" => g_variant_new_string(_title),
+            "Title" => g_variant_new_string(_item.Title),
             "Status" => g_variant_new_string("Active"),
-            "IconName" => g_variant_new_string(_iconName),
+            "IconName" => g_variant_new_string(_item.IconName),
             "IconThemePath" => g_variant_new_string(""),
             "ItemIsMenu" => g_variant_new_boolean(false),
             "Menu" => g_variant_new_object_path("/NO_DBUSMENU"),
@@ -261,42 +299,31 @@ public sealed partial class StatusNotifierTray : IDisposable
 
     private nint BuildTooltipVariant()
     {
-        // (sa(iiay)ss) - icon name, icon data array, title, description
-        var icon = g_variant_new_string(_iconName);
+        var icon = g_variant_new_string(_item.IconName);
         var emptyArray = g_variant_new_array(g_variant_type_new("(iiay)"), [], 0);
-        var title = g_variant_new_string(_title);
-        var desc = g_variant_new_string(_tooltip);
+        var title = g_variant_new_string(_item.Title);
+        var desc = g_variant_new_string(_item.Tooltip);
 
         var children = new[] { icon, emptyArray, title, desc };
         return g_variant_new_tuple(children, (nuint)children.Length);
     }
 
-    /// <summary>Sets the icon.</summary>
-    public void SetIcon(string iconName)
+    private void RaiseActivated()
     {
-        if (_disposed != 0) return;
-        _iconName = iconName;
-        EmitSignal("NewIcon");
+        GLib.Functions.IdleAdd(0, () =>
+        {
+            Activated?.Invoke();
+            return false;
+        });
     }
 
-    /// <summary>Sets recording state icon.</summary>
-    public void SetRecording(bool recording)
+    private void RaiseSecondaryActivated()
     {
-        SetIcon(recording ? "media-record" : "camera-video");
-    }
-
-    private void EmitSignal(string signalName)
-    {
-        if (_disposed != 0) return;
-
-        g_dbus_connection_emit_signal(
-            _connection,
-            nint.Zero, // No destination
-            ObjectPath,
-            ItemInterface,
-            signalName,
-            nint.Zero, // No parameters
-            out _);
+        GLib.Functions.IdleAdd(0, () =>
+        {
+            SecondaryActivated?.Invoke();
+            return false;
+        });
     }
 
     public void Dispose()
@@ -315,11 +342,7 @@ public sealed partial class StatusNotifierTray : IDisposable
 
         if (_selfHandle.IsAllocated)
             _selfHandle.Free();
-
-        // Connection is shared, don't close it
     }
-
-    #region P/Invoke
 
     [StructLayout(LayoutKind.Sequential)]
     private struct GDBusInterfaceVTable
@@ -334,8 +357,6 @@ public sealed partial class StatusNotifierTray : IDisposable
         nint connection, nint sender, nint objectPath, nint interfaceName,
         nint methodName, nint parameters, nint invocation, nint userData);
 
-    // Note: error is GError** - a pointer to a pointer. We receive it as nint (the pointer)
-    // and should write nint.Zero to *error if no error. But since we never error, we can ignore it.
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate nint GDBusGetPropertyFunc(
         nint connection, nint sender, nint objectPath, nint interfaceName,
@@ -374,12 +395,6 @@ public sealed partial class StatusNotifierTray : IDisposable
         string methodName, nint parameters, nint replyType, int flags,
         int timeoutMsec, nint cancellable, nint callback, nint userData);
 
-    [LibraryImport(LibGio, StringMarshalling = StringMarshalling.Utf8)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static partial bool g_dbus_connection_emit_signal(
-        nint connection, nint destinationBusName, string objectPath,
-        string interfaceName, string signalName, nint parameters, out nint error);
-
     [LibraryImport(LibGLib, StringMarshalling = StringMarshalling.Utf8)]
     private static partial nint g_variant_new_string(string value);
 
@@ -403,6 +418,4 @@ public sealed partial class StatusNotifierTray : IDisposable
 
     [LibraryImport(LibGLib)]
     private static partial void g_error_free(nint error);
-
-    #endregion
 }

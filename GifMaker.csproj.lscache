@@ -60,13 +60,16 @@ obj/Debug/net10.0/linux-x64/
  GifMaker.AssemblyInfo.cs
  GifMaker.GlobalUsings.g.cs
 src/App/
- ClipboardService.cs
+ AppModels.cs
+ DesktopFileActions.cs
  GifMakerApp.cs
+ GifMakerShell.cs
  MainWindow.cs
+ RecordingSession.cs
  RecordPage.cs
  ScreenshotPage.cs
+ ScreenshotSession.cs
  StatusNotifierTray.cs
- UiThread.cs
 src/Cli/
  CliArgs.cs
  CliRunner.cs

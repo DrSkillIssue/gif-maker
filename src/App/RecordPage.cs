@@ -1,55 +1,15 @@
 using System.Runtime.Versioning;
 using Gtk;
-using GifMaker.Core;
-using GifMaker.Recording;
 using GifMaker.Conversion;
-using GifMaker.X11;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace GifMaker.App;
 
 /// <summary>
-/// Record tab content - handles area selection, recording, conversion, and result display.
+/// Record tab content. Renders recording state and emits user intents.
 /// </summary>
 [SupportedOSPlatform("linux")]
 public sealed class RecordPage : Box
 {
-    #region State Machine
-
-    private abstract record PageState
-    {
-        private PageState() { }
-
-        /// <summary>Initial state - ready to select area.</summary>
-        public sealed record Idle : PageState;
-
-        /// <summary>User is selecting area with slop.</summary>
-        public sealed record Selecting : PageState;
-
-        /// <summary>Area selected, ready to record.</summary>
-        public sealed record Ready(ScreenRegion Region, RegionOverlay Overlay) : PageState;
-
-        /// <summary>Recording in progress.</summary>
-        public sealed record Recording(ScreenRegion Region, RegionOverlay Overlay, FFmpegRecorder Recorder, int Fps) : PageState;
-
-        /// <summary>Stopping recording.</summary>
-        public sealed record Stopping(ScreenRegion Region, RegionOverlay Overlay, FFmpegRecorder Recorder, int Fps) : PageState;
-
-        /// <summary>Converting recorded video.</summary>
-        public sealed record Converting(string TempPath, string OutputPath, int Fps, CancellationTokenSource Cts, RegionOverlay Overlay) : PageState;
-
-        /// <summary>Recording saved successfully.</summary>
-        public sealed record Saved(string FilePath) : PageState;
-
-        /// <summary>Error occurred.</summary>
-        public sealed record Error(string Message) : PageState;
-    }
-
-    #endregion
-
-    #region Configuration
-
     private static readonly (int Value, string Display)[] FpsOptions =
     [
         (15, "15 fps"),
@@ -59,14 +19,6 @@ public sealed class RecordPage : Box
     ];
 
     private const int DefaultFpsIndex = 2;
-    private const int MaxStatusLength = 80;
-
-    #endregion
-
-    #region Fields
-
-    private readonly ILogger<RecordPage> _logger;
-    private readonly IProcessRunner _processRunner;
 
     private readonly Label _statusLabel;
     private readonly Button _selectButton;
@@ -77,20 +29,12 @@ public sealed class RecordPage : Box
     private readonly ComboBoxText _formatCombo;
     private readonly ComboBoxText _fpsCombo;
     private readonly Entry _outputDirEntry;
-    private readonly Box _optionsBox;
     private readonly Box _resultBox;
 
-    private PageState _state = new PageState.Idle();
+    public event Action<RecordIntent>? IntentRaised;
 
-    #endregion
-
-    public RecordPage(
-        ILogger<RecordPage>? logger = null,
-        IProcessRunner? processRunner = null)
+    public RecordPage()
     {
-        _logger = logger ?? NullLogger<RecordPage>.Instance;
-        _processRunner = processRunner ?? ProcessRunner.Default;
-
         SetOrientation(Orientation.Vertical);
         SetSpacing(12);
         MarginTop = 20;
@@ -98,162 +42,161 @@ public sealed class RecordPage : Box
         MarginStart = 20;
         MarginEnd = 20;
 
-        // Status
         _statusLabel = Label.New("Select an area to record");
         _statusLabel.AddCssClass("dim-label");
         _statusLabel.Wrap = true;
         Append(_statusLabel);
 
-        // Select area button
         _selectButton = Button.NewWithLabel("Select Area");
         _selectButton.AddCssClass("suggested-action");
-        _selectButton.OnClicked += OnSelectClicked;
         _selectButton.MarginTop = 10;
+        _selectButton.OnClicked += (_, _) => IntentRaised?.Invoke(new RecordIntent.SelectRegion());
         Append(_selectButton);
 
-        // Options (format, fps, output dir)
-        _optionsBox = CreateOptionsBox(out _formatCombo, out _fpsCombo, out _outputDirEntry);
-        _optionsBox.MarginTop = 15;
-        Append(_optionsBox);
+        var optionsBox = Box.New(Orientation.Vertical, 8);
+        optionsBox.MarginTop = 15;
 
-        // Record/Stop button
+        var formatRow = Box.New(Orientation.Horizontal, 8);
+        formatRow.Append(Label.New("Format:"));
+        _formatCombo = ComboBoxText.New();
+        _formatCombo.AppendText("GIF");
+        _formatCombo.AppendText("MP4");
+        _formatCombo.AppendText("WebM");
+        _formatCombo.Active = 0;
+        _formatCombo.Hexpand = true;
+        formatRow.Append(_formatCombo);
+        optionsBox.Append(formatRow);
+
+        var fpsRow = Box.New(Orientation.Horizontal, 8);
+        fpsRow.Append(Label.New("FPS:"));
+        _fpsCombo = ComboBoxText.New();
+        foreach (var (_, display) in FpsOptions)
+            _fpsCombo.AppendText(display);
+        _fpsCombo.Active = DefaultFpsIndex;
+        _fpsCombo.Hexpand = true;
+        fpsRow.Append(_fpsCombo);
+        optionsBox.Append(fpsRow);
+
+        var outputRow = Box.New(Orientation.Horizontal, 8);
+        outputRow.Append(Label.New("Save to:"));
+        _outputDirEntry = Entry.New();
+        _outputDirEntry.SetText(RecordingOutputPaths.GetDefaultVideoDir());
+        _outputDirEntry.Hexpand = true;
+        _outputDirEntry.TooltipText = "Directory where recordings will be saved";
+        outputRow.Append(_outputDirEntry);
+        optionsBox.Append(outputRow);
+
+        Append(optionsBox);
+
         _recordButton = Button.NewWithLabel("Record");
         _recordButton.AddCssClass("suggested-action");
-        _recordButton.OnClicked += OnRecordClicked;
         _recordButton.Sensitive = false;
         _recordButton.MarginTop = 10;
+        _recordButton.OnClicked += (_, _) => IntentRaised?.Invoke(new RecordIntent.ToggleRecording());
         Append(_recordButton);
 
-        // Result buttons (Open, Copy)
         _resultBox = Box.New(Orientation.Horizontal, 10);
         _resultBox.Halign = Align.Center;
         _resultBox.MarginTop = 10;
 
         _openButton = Button.NewWithLabel("Open");
-        _openButton.OnClicked += OnOpenClicked;
         _openButton.Sensitive = false;
+        _openButton.OnClicked += (_, _) => IntentRaised?.Invoke(new RecordIntent.OpenSaved());
         _resultBox.Append(_openButton);
 
         _copyButton = Button.NewWithLabel("Copy");
-        _copyButton.OnClicked += OnCopyClicked;
         _copyButton.TooltipText = "Copy file to clipboard";
         _copyButton.Sensitive = false;
+        _copyButton.OnClicked += (_, _) => IntentRaised?.Invoke(new RecordIntent.CopySaved());
         _resultBox.Append(_copyButton);
 
         _cancelButton = Button.NewWithLabel("Cancel");
-        _cancelButton.OnClicked += OnCancelClicked;
         _cancelButton.Sensitive = false;
+        _cancelButton.OnClicked += (_, _) => IntentRaised?.Invoke(new RecordIntent.CancelConversion());
         _resultBox.Append(_cancelButton);
 
         Append(_resultBox);
-
-        ApplyUiFromState();
+        Render(new RecordViewState.Idle());
     }
 
-    private static Box CreateOptionsBox(
-        out ComboBoxText formatCombo,
-        out ComboBoxText fpsCombo,
-        out Entry outputDirEntry)
+    public RecordStartOptions ReadStartOptions()
     {
-        var box = Box.New(Orientation.Vertical, 8);
+        var fpsIndex = _fpsCombo.Active;
+        var fps = fpsIndex >= 0 && fpsIndex < FpsOptions.Length
+            ? FpsOptions[fpsIndex].Value
+            : FpsOptions[DefaultFpsIndex].Value;
 
-        // Format row
-        var formatRow = Box.New(Orientation.Horizontal, 8);
-        formatRow.Append(Label.New("Format:"));
-        formatCombo = ComboBoxText.New();
-        formatCombo.AppendText("GIF");
-        formatCombo.AppendText("MP4");
-        formatCombo.AppendText("WebM");
-        formatCombo.Active = 0;
-        formatCombo.Hexpand = true;
-        formatRow.Append(formatCombo);
-        box.Append(formatRow);
-
-        // FPS row
-        var fpsRow = Box.New(Orientation.Horizontal, 8);
-        fpsRow.Append(Label.New("FPS:"));
-        fpsCombo = ComboBoxText.New();
-        foreach (var (_, display) in FpsOptions)
-            fpsCombo.AppendText(display);
-        fpsCombo.Active = DefaultFpsIndex;
-        fpsCombo.Hexpand = true;
-        fpsRow.Append(fpsCombo);
-        box.Append(fpsRow);
-
-        // Output dir row
-        var outputRow = Box.New(Orientation.Horizontal, 8);
-        outputRow.Append(Label.New("Save to:"));
-        outputDirEntry = Entry.New();
-        outputDirEntry.SetText(RecordingOutputPaths.GetDefaultVideoDir());
-        outputDirEntry.Hexpand = true;
-        outputDirEntry.TooltipText = "Directory where recordings will be saved";
-        outputRow.Append(outputDirEntry);
-        box.Append(outputRow);
-
-        return box;
+        return new RecordStartOptions(fps);
     }
 
-    #region State Management
-
-    private void TransitionTo(PageState newState)
+    public RecordExportTarget ReadExportTarget()
     {
-        _state = newState;
-        ApplyUiFromState();
+        var outputDir = _outputDirEntry.GetText();
+        var directory = string.IsNullOrWhiteSpace(outputDir) ? null : outputDir;
+        var format = _formatCombo.Active switch
+        {
+            0 => ConversionFormat.Gif,
+            1 => ConversionFormat.Mp4,
+            2 => ConversionFormat.WebM,
+            _ => throw new InvalidOperationException($"Unhandled recording format index: {_formatCombo.Active}")
+        };
+
+        return new RecordExportTarget(format, directory);
     }
 
-    private void ApplyUiFromState()
+    public void Render(RecordViewState state)
     {
         var (status, selectSensitive, recordLabel, recordSensitive, recordDestructive,
-             optionsSensitive, openSensitive, copySensitive, cancelSensitive) = _state switch
-             {
-                 PageState.Idle => (
-                     "Select an area to record",
-                     true, "Record", false, false,
-                     true, false, false, false),
+            optionsSensitive, openSensitive, copySensitive, cancelSensitive) = state switch
+            {
+                RecordViewState.Idle => (
+                    "Select an area to record",
+                    true, "Record", false, false,
+                    true, false, false, false),
 
-                 PageState.Selecting => (
-                     "Click and drag to select area...",
-                     false, "Record", false, false,
-                     false, false, false, false),
+                RecordViewState.Selecting => (
+                    "Click and drag to select area...",
+                    false, "Record", false, false,
+                    false, false, false, false),
 
-                 PageState.Ready r => (
-                     $"Ready: {r.Region.Width}x{r.Region.Height}",
-                     true, "Record", true, false,
-                     true, false, false, false),
+                RecordViewState.Ready ready => (
+                    $"Ready: {ready.Region.Width}x{ready.Region.Height}",
+                    true, "Record", true, false,
+                    true, false, false, false),
 
-                 PageState.Recording r => (
-                     $"Recording at {r.Fps} fps...",
-                     false, "Stop", true, true,
-                     false, false, false, false),
+                RecordViewState.Recording recording => (
+                    $"Recording at {recording.Fps} fps...",
+                    false, "Stop", true, true,
+                    false, false, false, false),
 
-                 PageState.Stopping s => (
-                     $"Stopping ({s.Fps} fps)...",
-                     false, "Stop", false, true,
-                     false, false, false, false),
+                RecordViewState.Stopping stopping => (
+                    $"Stopping ({stopping.Fps} fps)...",
+                    false, "Stop", false, true,
+                    false, false, false, false),
 
-                 PageState.Converting => (
-                     "Converting...",
-                     false, "Converting", false, false,
-                     false, false, false, true),
+                RecordViewState.Converting => (
+                    "Converting...",
+                    false, "Converting", false, false,
+                    false, false, false, true),
 
-                 PageState.Saved s => (
-                     $"Saved: {Path.GetFileName(s.FilePath)}",
-                     true, "New Recording", true, false,
-                     true, true, true, false),
+                RecordViewState.Saved saved => (
+                    $"Saved: {Path.GetFileName(saved.Media.Path)}",
+                    true, "New Recording", true, false,
+                    true, true, true, false),
 
-                 PageState.Error e => (
-                     $"Error: {e.Message}",
-                     true, "Retry", true, false,
-                     true, false, false, false),
+                RecordViewState.Error error => (
+                    $"Error: {error.Message}",
+                    true, "Retry", true, false,
+                    true, false, false, false),
 
-                 _ => throw new InvalidOperationException($"Unhandled state: {_state}")
-             };
+                _ => throw new InvalidOperationException($"Unhandled state: {state.GetType().Name}")
+            };
 
         _statusLabel.SetLabel(status);
         _selectButton.Sensitive = selectSensitive;
-
         _recordButton.SetLabel(recordLabel);
         _recordButton.Sensitive = recordSensitive;
+
         if (recordDestructive)
         {
             _recordButton.RemoveCssClass("suggested-action");
@@ -271,271 +214,7 @@ public sealed class RecordPage : Box
         _openButton.Sensitive = openSensitive;
         _copyButton.Sensitive = copySensitive;
         _cancelButton.Sensitive = cancelSensitive;
+        _resultBox.Visible = openSensitive || copySensitive || cancelSensitive;
     }
 
-    #endregion
-
-    #region Event Handlers
-
-    private async void OnSelectClicked(Button sender, EventArgs args)
-    {
-        // If already have a region selected, dispose the overlay
-        if (_state is PageState.Ready ready)
-        {
-            ready.Overlay.Dispose();
-        }
-
-        TransitionTo(new PageState.Selecting());
-
-        // Hide main window during selection
-        var mainWindow = GetAncestor(Window.GetGType()) as MainWindow;
-        mainWindow?.HideTemporarily();
-
-        // Small delay for window to hide
-        await Task.Delay(100);
-
-        try
-        {
-            using var selector = new AreaSelector(_processRunner);
-            var result = await selector.SelectAsync();
-
-            result.Match(
-                region =>
-                {
-                    var overlay = new RegionOverlay(region, 3);
-                    overlay.Show();
-                    GLib.Functions.IdleAdd(0, () =>
-                    {
-                        TransitionTo(new PageState.Ready(region, overlay));
-                        mainWindow?.ShowAgain();
-                        return false;
-                    });
-                },
-                error =>
-                {
-                    GLib.Functions.IdleAdd(0, () =>
-                    {
-                        if (error != "Selection cancelled")
-                            _logger.LogWarning("Selection failed: {Error}", error);
-                        TransitionTo(new PageState.Idle());
-                        mainWindow?.ShowAgain();
-                        return false;
-                    });
-                });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Selection error");
-            GLib.Functions.IdleAdd(0, () =>
-            {
-                TransitionTo(new PageState.Error(Truncate(ex.Message)));
-                mainWindow?.ShowAgain();
-                return false;
-            });
-        }
-    }
-
-    private async void OnRecordClicked(Button sender, EventArgs args)
-    {
-        _recordButton.Sensitive = false;
-
-        try
-        {
-            switch (_state)
-            {
-                case PageState.Ready ready:
-                    StartRecording(ready.Region, ready.Overlay);
-                    break;
-
-                case PageState.Recording recording:
-                    TransitionTo(new PageState.Stopping(recording.Region, recording.Overlay, recording.Recorder, recording.Fps));
-                    await StopRecordingAsync(recording.Recorder, recording.Fps, recording.Overlay);
-                    break;
-
-                case PageState.Saved:
-                case PageState.Error:
-                    TransitionTo(new PageState.Idle());
-                    break;
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Recording error");
-            TransitionTo(new PageState.Error(Truncate(ex.Message)));
-        }
-
-        ApplyUiFromState();
-    }
-
-    private void StartRecording(ScreenRegion region, RegionOverlay overlay)
-    {
-        var fpsIndex = _fpsCombo.Active;
-        var fps = fpsIndex >= 0 && fpsIndex < FpsOptions.Length
-            ? FpsOptions[fpsIndex].Value
-            : FpsOptions[DefaultFpsIndex].Value;
-
-        var recorder = new FFmpegRecorder();
-        var settings = FFmpegRecorder.RecordingSettings.Create(region, fps).GetValueOrThrow();
-        recorder.Start(settings);
-
-        TransitionTo(new PageState.Recording(region, overlay, recorder, fps));
-    }
-
-    private async Task StopRecordingAsync(FFmpegRecorder recorder, int fps, RegionOverlay overlay)
-    {
-        string? tempPath = null;
-        CancellationTokenSource? cts = null;
-
-        try
-        {
-            await recorder.StopAsync();
-            tempPath = recorder.TempPath;
-
-            overlay.Hide();
-
-            var format = GetSelectedFormat();
-            var outputPath = GenerateOutputPath(format);
-            cts = new CancellationTokenSource();
-
-            TransitionTo(new PageState.Converting(tempPath, outputPath, fps, cts, overlay));
-
-            var converter = new FFmpegConverter();
-            var profile = ConversionProfile.Create(format, fps).GetValueOrThrow();
-            var job = ConversionJob.Create(tempPath, outputPath, profile).GetValueOrThrow();
-            var conversionResult = await converter.ConvertAsync(job, cts.Token);
-            if (!conversionResult.IsSuccess)
-            {
-                var message = conversionResult.Match(_ => "", error => error);
-                throw new InvalidOperationException(message);
-            }
-            var converted = conversionResult.GetValueOrThrow();
-
-            cts.Dispose();
-            cts = null;
-            overlay.Dispose();
-
-            TransitionTo(new PageState.Saved(converted.OutputFile.Path));
-            _logger.LogInformation("Saved: {OutputPath}", converted.OutputFile.Path);
-        }
-        catch (OperationCanceledException)
-        {
-            overlay.Dispose();
-            TransitionTo(new PageState.Idle());
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Conversion failed");
-            overlay.Dispose();
-            TransitionTo(new PageState.Error(Truncate(ex.Message)));
-        }
-        finally
-        {
-            cts?.Dispose();
-            if (tempPath is not null)
-                CleanupTempFile(tempPath);
-            recorder.Dispose();
-        }
-    }
-
-    private void OnCancelClicked(Button sender, EventArgs args)
-    {
-        if (_state is PageState.Converting converting)
-        {
-            converting.Cts.Cancel();
-        }
-    }
-
-    private ConversionFormat GetSelectedFormat() => _formatCombo.Active switch
-    {
-        0 => ConversionFormat.Gif,
-        1 => ConversionFormat.Mp4,
-        2 => ConversionFormat.WebM,
-        _ => ConversionFormat.Gif
-    };
-
-    private string GenerateOutputPath(ConversionFormat format)
-    {
-        var outputDir = _outputDirEntry.GetText();
-        var dir = string.IsNullOrWhiteSpace(outputDir) ? null : outputDir;
-        return RecordingOutputPaths.GenerateRecordingPath(format, dir);
-    }
-
-    private void CleanupTempFile(string path)
-    {
-        try { File.Delete(path); }
-        catch (IOException ex) { _logger.LogWarning(ex, "Failed to delete temp file: {Path}", path); }
-    }
-
-    private void OnOpenClicked(Button sender, EventArgs args)
-    {
-        if (_state is not PageState.Saved saved)
-            return;
-
-        if (!File.Exists(saved.FilePath))
-        {
-            _logger.LogWarning("File not found: {FilePath}", saved.FilePath);
-            TransitionTo(new PageState.Error("File not found"));
-            return;
-        }
-
-        if (!_processRunner.StartDetached(new ProcessCommand("xdg-open", [saved.FilePath], ProcessIo.Detached)))
-        {
-            _logger.LogError("Failed to open file with xdg-open");
-            TransitionTo(new PageState.Error("Failed to open file"));
-        }
-    }
-
-    private void OnCopyClicked(Button sender, EventArgs args)
-    {
-        if (_state is not PageState.Saved saved)
-            return;
-
-        var window = GetAncestor(Window.GetGType()) as Window;
-        if (window is null)
-            return;
-
-        var result = ClipboardService.CopyFileToClipboard(window, saved.FilePath, _logger);
-        if (result.Success)
-        {
-            _statusLabel.SetLabel("Copied to clipboard!");
-        }
-        else
-        {
-            _logger.LogError("Failed to copy to clipboard: {Error}", result.Error);
-            TransitionTo(new PageState.Error(result.Error ?? "Copy failed"));
-        }
-    }
-
-    #endregion
-
-    private static string Truncate(string message, int max = MaxStatusLength) =>
-        message.Length <= max ? message : message[..(max - 3)] + "...";
-
-    /// <summary>
-    /// Cleans up resources when window closes.
-    /// </summary>
-    public void Cleanup()
-    {
-        switch (_state)
-        {
-            case PageState.Ready ready:
-                ready.Overlay.Dispose();
-                break;
-            case PageState.Recording recording:
-                recording.Overlay.Dispose();
-                recording.Recorder.Dispose();
-                break;
-            case PageState.Stopping stopping:
-                stopping.Overlay.Dispose();
-                stopping.Recorder.Dispose();
-                break;
-            case PageState.Converting converting:
-                converting.Cts.Cancel();
-                converting.Cts.Dispose();
-                converting.Overlay.Dispose();
-                break;
-        }
-
-        _state = new PageState.Idle();
-    }
 }

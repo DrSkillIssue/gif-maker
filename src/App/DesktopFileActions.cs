@@ -2,31 +2,18 @@ using System.Collections.Frozen;
 using System.Runtime.CompilerServices;
 using System.Text;
 using Gdk;
+using GifMaker.Core;
 using GifMaker.X11;
 using GLib;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace GifMaker.App;
 
 /// <summary>
-/// GTK4-native clipboard service for copying files with maximum app compatibility.
+/// Desktop shell operations for files created by the application.
 /// </summary>
-/// <remarks>
-/// <para>
-/// Provides multiple clipboard formats simultaneously via <c>gdk_content_provider_new_union</c>
-/// so different apps can consume whichever format they prefer:
-/// </para>
-/// <list type="bullet">
-///   <item><b>Raw bytes</b> (image/*) - Discord, Slack, Electron apps</item>
-///   <item><b>text/uri-list</b> - File managers, KDE apps (RFC 2483)</item>
-///   <item><b>x-special/gnome-copied-files</b> - GNOME apps (Nautilus, etc.)</item>
-///   <item><b>text/plain</b> - Universal fallback with file path</item>
-/// </list>
-/// <para>
-/// Works on both X11 and Wayland - GTK4's GdkClipboard abstracts the differences.
-/// </para>
-/// </remarks>
-internal static class ClipboardService
+public sealed class DesktopFileActions
 {
     private const int MaxProviders = 4;
 
@@ -47,94 +34,99 @@ internal static class ClipboardService
             [".webm"] = "video/webm",
         }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>
-    /// Result of clipboard copy operation.
-    /// </summary>
-    public readonly record struct CopyResult(bool Success, string? Error = null)
+    private readonly IProcessRunner _processRunner;
+    private readonly ILogger<DesktopFileActions> _logger;
+
+    public DesktopFileActions(
+        IProcessRunner? processRunner = null,
+        ILogger<DesktopFileActions>? logger = null)
     {
-        public static CopyResult Ok() => new(true);
-        public static CopyResult Fail(string error) => new(false, error);
+        _processRunner = processRunner ?? ProcessRunner.Default;
+        _logger = logger ?? NullLogger<DesktopFileActions>.Instance;
     }
 
-    /// <summary>
-    /// Copy a file to clipboard with multiple formats for broad compatibility.
-    /// </summary>
-    /// <param name="widget">Widget to get clipboard from.</param>
-    /// <param name="filePath">Absolute path to the file to copy.</param>
-    /// <param name="logger">Optional logger for diagnostics.</param>
-    /// <returns>Result indicating success or failure with error message.</returns>
-    public static CopyResult CopyFileToClipboard(
-        Gtk.Widget widget,
-        string filePath,
-        ILogger? logger = null)
+    public Result<SavedMedia> Open(SavedMedia media)
     {
-        ArgumentNullException.ThrowIfNull(widget);
-        ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
+        if (!File.Exists(media.Path))
+            return Result<SavedMedia>.Fail("File not found");
 
-        if (!File.Exists(filePath))
-            return CopyResult.Fail("File not found");
+        return _processRunner.StartDetached(new ProcessCommand("xdg-open", [media.Path], ProcessIo.Detached))
+            ? Result<SavedMedia>.Ok(media)
+            : Result<SavedMedia>.Fail("Failed to open file");
+    }
 
-        var clipboard = widget.GetClipboard();
+    public Result<SavedMedia> OpenContainingFolder(SavedMedia media)
+    {
+        var folder = Path.GetDirectoryName(media.Path);
+        if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder))
+            return Result<SavedMedia>.Fail("Containing folder not found");
+
+        return _processRunner.StartDetached(new ProcessCommand("xdg-open", [folder], ProcessIo.Detached))
+            ? Result<SavedMedia>.Ok(media)
+            : Result<SavedMedia>.Fail("Failed to open folder");
+    }
+
+    public Result<SavedMedia> CopyToClipboard(Gtk.Widget owner, SavedMedia media)
+    {
+        ArgumentNullException.ThrowIfNull(owner);
+
+        if (!File.Exists(media.Path))
+            return Result<SavedMedia>.Fail("File not found");
+
+        var clipboard = owner.GetClipboard();
         if (clipboard is null)
-            return CopyResult.Fail("Failed to get clipboard");
+            return Result<SavedMedia>.Fail("Failed to get clipboard");
 
-        var file = Gio.FileHelper.NewForPath(filePath);
+        var file = Gio.FileHelper.NewForPath(media.Path);
         var uri = file.GetUri();
         if (string.IsNullOrEmpty(uri))
-            return CopyResult.Fail("Failed to get file URI");
+            return Result<SavedMedia>.Fail("Failed to get file URI");
 
-        // Stack-allocated provider handle array
         Span<nint> providerHandles = stackalloc nint[MaxProviders];
         var providerCount = 0;
 
         try
         {
-            var mimeType = GetMimeType(filePath);
+            var mimeType = GetMimeType(media.Path);
 
-            // 1. Raw bytes for images (Discord/Slack/Electron apps)
             if (IsImageMime(mimeType))
             {
-                var imageProvider = CreateImageProvider(filePath, mimeType, logger);
+                var imageProvider = CreateImageProvider(media.Path, mimeType);
                 if (imageProvider is not null)
                     providerHandles[providerCount++] = imageProvider.Handle.DangerousGetHandle();
             }
 
-            // 2. text/uri-list (RFC 2483)
             var uriListProvider = CreateUriListProvider(uri);
             providerHandles[providerCount++] = uriListProvider.Handle.DangerousGetHandle();
 
-            // 3. x-special/gnome-copied-files
             var gnomeProvider = CreateGnomeCopiedFilesProvider(uri);
             providerHandles[providerCount++] = gnomeProvider.Handle.DangerousGetHandle();
 
-            // 4. text/plain fallback
-            var textProvider = CreateTextPlainProvider(filePath);
+            var textProvider = CreateTextPlainProvider(media.Path);
             providerHandles[providerCount++] = textProvider.Handle.DangerousGetHandle();
 
-            // Create union - must copy to array for P/Invoke
             var handleArray = providerHandles[..providerCount].ToArray();
             var unionHandle = X11Interop.GdkContentProviderNewUnion(handleArray, (nuint)providerCount);
 
             if (unionHandle == 0)
-                return CopyResult.Fail("Failed to create content provider union");
+                return Result<SavedMedia>.Fail("Failed to create content provider union");
 
             var success = X11Interop.GdkClipboardSetContent(
                 clipboard.Handle.DangerousGetHandle(),
                 unionHandle);
 
-            return success ? CopyResult.Ok() : CopyResult.Fail("Failed to set clipboard content");
+            return success
+                ? Result<SavedMedia>.Ok(media)
+                : Result<SavedMedia>.Fail("Failed to set clipboard content");
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            logger?.LogError(ex, "Clipboard copy failed for {FilePath}", filePath);
-            return CopyResult.Fail(ex.Message);
+            _logger.LogError(ex, "Clipboard copy failed for {FilePath}", media.Path);
+            return Result<SavedMedia>.Fail(ex.Message);
         }
     }
 
-    private static ContentProvider? CreateImageProvider(
-        string filePath,
-        string mimeType,
-        ILogger? logger)
+    private ContentProvider? CreateImageProvider(string filePath, string mimeType)
     {
         try
         {
@@ -144,7 +136,7 @@ internal static class ClipboardService
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            logger?.LogWarning(ex, "Failed to read image for clipboard: {Path}", filePath);
+            _logger.LogWarning(ex, "Failed to read image for clipboard: {Path}", filePath);
             return null;
         }
     }
@@ -165,9 +157,6 @@ internal static class ClipboardService
         return ExtensionToMime.GetValueOrDefault(extension, DefaultMime);
     }
 
-    /// <summary>
-    /// Checks if MIME type is an image type.
-    /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool IsImageMime(string mimeType) =>
         mimeType.AsSpan().StartsWith("image/", StringComparison.Ordinal);
