@@ -40,37 +40,37 @@ public sealed partial class WindowGeometry
     /// <summary>
     /// Gets the geometry of the currently focused window.
     /// </summary>
-    /// <returns>Rectangle of the focused window, or error if unavailable.</returns>
-    public async Task<Result<Rectangle>> GetActiveWindowAsync(CancellationToken ct = default)
+    /// <returns>Region of the focused window, or error if unavailable.</returns>
+    public async Task<Result<ScreenRegion>> GetActiveWindowAsync(CancellationToken ct = default)
     {
         // Get active window ID
         var idResult = await _processRunner.RunAsync(
-            "xdotool", ["getactivewindow"], ct).ConfigureAwait(false);
+            new ProcessCommand("xdotool", ["getactivewindow"], ProcessIo.Capture), ct).ConfigureAwait(false);
 
         if (idResult.ExitCode != 0)
-            return Result<Rectangle>.Fail("Failed to get active window (is xdotool installed?)");
+            return Result<ScreenRegion>.Fail("Failed to get active window (is xdotool installed?)");
 
         var windowId = idResult.StandardOutput.Trim();
         if (string.IsNullOrEmpty(windowId))
-            return Result<Rectangle>.Fail("No active window found");
+            return Result<ScreenRegion>.Fail("No active window found");
 
         // Get window geometry
         var geoResult = await _processRunner.RunAsync(
-            "xdotool", ["getwindowgeometry", windowId], ct).ConfigureAwait(false);
+            new ProcessCommand("xdotool", ["getwindowgeometry", windowId], ProcessIo.Capture), ct).ConfigureAwait(false);
 
         if (geoResult.ExitCode != 0)
-            return Result<Rectangle>.Fail($"Failed to get window geometry: {geoResult.StandardError}");
+            return Result<ScreenRegion>.Fail($"Failed to get window geometry: {geoResult.StandardError}");
 
         return ParseGeometry(geoResult.StandardOutput);
     }
 
-    private static Result<Rectangle> ParseGeometry(string output)
+    private static Result<ScreenRegion> ParseGeometry(string output)
     {
         var posMatch = PositionRegex().Match(output);
         var geoMatch = GeometryRegex().Match(output);
 
         if (!posMatch.Success || !geoMatch.Success)
-            return Result<Rectangle>.Fail($"Failed to parse window geometry: {output}");
+            return Result<ScreenRegion>.Fail($"Failed to parse window geometry: {output}");
 
         // Use TryParse with ValueSpan to avoid allocation and handle overflow
         if (!int.TryParse(posMatch.Groups[1].ValueSpan, CultureInfo.InvariantCulture, out var x) ||
@@ -78,9 +78,11 @@ public sealed partial class WindowGeometry
             !int.TryParse(geoMatch.Groups[1].ValueSpan, CultureInfo.InvariantCulture, out var width) ||
             !int.TryParse(geoMatch.Groups[2].ValueSpan, CultureInfo.InvariantCulture, out var height))
         {
-            return Result<Rectangle>.Fail($"Invalid numeric values in geometry: {output}");
+            return Result<ScreenRegion>.Fail($"Invalid numeric values in geometry: {output}");
         }
 
-        return Rectangle.CreateValidated(x, y, width, height, "Window has zero area");
+        return ScreenRegion.Create(x, y, width, height).Match(
+            Result<ScreenRegion>.Ok,
+            _ => Result<ScreenRegion>.Fail("Window has zero area"));
     }
 }

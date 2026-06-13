@@ -30,7 +30,7 @@ public sealed class ScreenshotPage : Box
         public sealed record Capturing(CaptureMode Mode) : PageState;
 
         /// <summary>Screenshot saved successfully.</summary>
-        public sealed record Saved(string FilePath, Rectangle Region, CaptureMode Mode, Gdk.Texture? Texture) : PageState;
+        public sealed record Saved(string FilePath, ScreenRegion Region, CaptureMode Mode, Gdk.Texture? Texture) : PageState;
 
         /// <summary>Error occurred.</summary>
         public sealed record Error(string Message) : PageState;
@@ -338,19 +338,7 @@ public sealed class ScreenshotPage : Box
                 result.Match(
                     region =>
                     {
-                        if (region.IsValid)
-                        {
-                            _ = CaptureRegionAsync(region, mode, showPointer, cursorPosition, mainWindow);
-                        }
-                        else
-                        {
-                            GLib.Functions.IdleAdd(0, () =>
-                            {
-                                TransitionTo(new PageState.Idle());
-                                mainWindow?.ShowAgain();
-                                return false;
-                            });
-                        }
+                        _ = CaptureRegionAsync(region, mode, showPointer, cursorPosition, mainWindow);
                     },
                     error =>
                     {
@@ -408,7 +396,7 @@ public sealed class ScreenshotPage : Box
     }
 
     private async Task CaptureRegionAsync(
-        Rectangle region,
+        ScreenRegion region,
         CaptureMode mode,
         bool showPointer,
         (int X, int Y)? fixedCursorPosition,
@@ -420,7 +408,13 @@ public sealed class ScreenshotPage : Box
             return false;
         });
 
-        var captureResult = await _screenshotService.CaptureAsync(region, mode, showPointer, fixedCursorPosition);
+        var captureResult = await _screenshotService.CaptureAsync(
+            new ScreenshotRequest(
+                region,
+                mode,
+                showPointer,
+                fixedCursorPosition,
+                ScreenshotOutputTarget.Default));
 
         captureResult.Match(
             result =>
@@ -472,7 +466,7 @@ public sealed class ScreenshotPage : Box
             return;
 
         if (File.Exists(saved.FilePath))
-            _processRunner.StartDetached("xdg-open", [saved.FilePath]);
+            _processRunner.StartDetached(new ProcessCommand("xdg-open", [saved.FilePath], ProcessIo.Detached));
     }
 
     private void OnOpenFolderClicked(Button sender, EventArgs args)
@@ -482,7 +476,7 @@ public sealed class ScreenshotPage : Box
 
         var folder = Path.GetDirectoryName(saved.FilePath);
         if (!string.IsNullOrEmpty(folder) && Directory.Exists(folder))
-            _processRunner.StartDetached("xdg-open", [folder]);
+            _processRunner.StartDetached(new ProcessCommand("xdg-open", [folder], ProcessIo.Detached));
     }
 
     private void OnCopyClicked(Button sender, EventArgs args)

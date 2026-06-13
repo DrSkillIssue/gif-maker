@@ -1,30 +1,17 @@
-using System.Buffers;
 using System.Diagnostics;
-using System.Text;
 using GifMaker.Core;
-using IFFmpegProcess = GifMaker.Core.IFFmpegProcess;
-
 
 namespace GifMaker.Conversion;
 
 /// <summary>
-/// Converts recorded video to various output formats using FFmpeg.
-/// Thread-safe, cancellable, with proper resource cleanup.
+/// Converts recorded video using FFmpeg.
 /// </summary>
-public sealed class FFmpegConverter(IFFmpegProcessFactory<IFFmpegProcess>? processFactory = null)
+public sealed class FFmpegConverter(IProcessRunner? processRunner = null)
 {
-    /// <summary>Default timeout for FFmpeg operations.</summary>
     public static readonly TimeSpan DefaultTimeout = TimeSpan.FromMinutes(30);
 
-    private const int MinWidth = 16;
-    private const int MaxWidth = 7680; // 8K
-    private const int MinFps = 1;
-    private const int MaxFps = 120;
-    private const int CharBufferSize = 4096;
+    private readonly IProcessRunner _processRunner = processRunner ?? ProcessRunner.Default;
 
-    private readonly IFFmpegProcessFactory<IFFmpegProcess> _processFactory = processFactory ?? Core.FFmpegConversionProcessFactory.Default;
-
-    /// <summary>Timeout for FFmpeg operations.</summary>
     public TimeSpan Timeout
     {
         get => field;
@@ -35,413 +22,89 @@ public sealed class FFmpegConverter(IFFmpegProcessFactory<IFFmpegProcess>? proce
         }
     } = DefaultTimeout;
 
-    /// <summary>
-    /// Validated, immutable conversion settings. Cannot be constructed with invalid values.
-    /// </summary>
-    public readonly struct ConversionSettings : IEquatable<ConversionSettings>
+    public async Task<Result<ConversionResult>> ConvertAsync(ConversionJob job, CancellationToken ct = default)
     {
-        /// <summary>Target output format.</summary>
-        public OutputFormat Format { get; }
+        ArgumentNullException.ThrowIfNull(job);
 
-        /// <summary>Frames per second (1-120).</summary>
-        public int Fps { get; }
-
-        /// <summary>Output width in pixels (0 for original, or 16-7680).</summary>
-        public int Width { get; }
-
-        private ConversionSettings(OutputFormat format, int fps, int width)
-        {
-            Format = format;
-            Fps = fps;
-            Width = width;
-        }
-
-        /// <summary>
-        /// Creates validated settings, returning error if invalid.
-        /// </summary>
-        public static Result<ConversionSettings> Create(
-            OutputFormat format,
-            int fps = 30,
-            int width = 0)
-        {
-            if (fps is < MinFps or > MaxFps)
-                return Result<ConversionSettings>.Fail($"FPS must be between {MinFps} and {MaxFps}");
-
-            if (width != 0 && width is < MinWidth or > MaxWidth)
-                return Result<ConversionSettings>.Fail($"Width must be 0 (original) or between {MinWidth} and {MaxWidth}");
-
-            if (!Enum.IsDefined(format))
-                return Result<ConversionSettings>.Fail($"Unknown format: {format}");
-
-            return Result<ConversionSettings>.Ok(new ConversionSettings(format, fps, width));
-        }
-
-        /// <summary>
-        /// Creates settings, throwing if invalid.
-        /// </summary>
-        /// <exception cref="ArgumentException">Settings are invalid.</exception>
-        public static ConversionSettings CreateOrThrow(
-            OutputFormat format,
-            int fps = 30,
-            int width = 0) =>
-            Create(format, fps, width).GetValueOrThrow();
-
-        public bool Equals(ConversionSettings other) =>
-            Format == other.Format && Fps == other.Fps && Width == other.Width;
-
-        public override bool Equals(object? obj) => obj is ConversionSettings other && Equals(other);
-
-        public override int GetHashCode() => HashCode.Combine(Format, Fps, Width);
-
-        public static bool operator ==(ConversionSettings left, ConversionSettings right) => left.Equals(right);
-        public static bool operator !=(ConversionSettings left, ConversionSettings right) => !left.Equals(right);
-    }
-
-    /// <summary>Progress information during conversion.</summary>
-    public readonly record struct ConversionProgress(string Message, TimeSpan ElapsedTime);
-
-    /// <summary>
-    /// Converts source video to specified format.
-    /// </summary>
-    /// <param name="sourcePath">Path to source video file.</param>
-    /// <param name="destPath">Output path for converted file.</param>
-    /// <param name="settings">Conversion settings.</param>
-    /// <param name="progress">Optional progress reporter.</param>
-    /// <param name="ct">Cancellation token.</param>
-    /// <exception cref="ArgumentException">Invalid arguments.</exception>
-    /// <exception cref="FileNotFoundException">Source file not found.</exception>
-    /// <exception cref="DirectoryNotFoundException">Output directory not found.</exception>
-    /// <exception cref="FFmpegException">FFmpeg conversion failed.</exception>
-    /// <exception cref="OperationCanceledException">Operation was cancelled.</exception>
-    /// <exception cref="TimeoutException">Conversion exceeded timeout.</exception>
-    public async Task ConvertAsync(
-        string sourcePath,
-        string destPath,
-        ConversionSettings settings,
-        IProgress<ConversionProgress>? progress = null,
-        CancellationToken ct = default)
-    {
-        ValidateInputs(sourcePath, destPath);
-
-        var args = new FFmpegArgumentList();
-        BuildArgumentList(ref args, sourcePath, destPath, settings);
-        using var process = _processFactory.Create(args.AsSpan());
-        var stderr = await RunFFmpegAsync(process, progress, ct).ConfigureAwait(false);
-
-        if (!File.Exists(destPath))
-        {
-            throw new FFmpegException(
-                "FFmpeg completed but output file was not created",
-                exitCode: 0,
-                stderr);
-        }
-    }
-
-    private static void ValidateInputs(string sourcePath, string destPath)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
-        ArgumentException.ThrowIfNullOrWhiteSpace(destPath);
-
-        if (!File.Exists(sourcePath))
-            throw new FileNotFoundException("Source video not found", sourcePath);
-
-        var destDir = Path.GetDirectoryName(destPath);
-        if (!string.IsNullOrEmpty(destDir) && !Directory.Exists(destDir))
-            throw new DirectoryNotFoundException($"Output directory not found: {destDir}");
-    }
-
-    /// <summary>
-    /// Builds FFmpeg argument list. Arguments stored in stack-allocated inline array.
-    /// </summary>
-    private static void BuildArgumentList(
-        ref FFmpegArgumentList args,
-        string source,
-        string dest,
-        ConversionSettings settings)
-    {
-        switch (settings.Format)
-        {
-            case OutputFormat.Gif:
-                BuildGifArgs(ref args, source, dest, settings.Fps, settings.Width);
-                break;
-            case OutputFormat.Mp4:
-                BuildMp4Args(ref args, source, dest, settings.Fps, settings.Width);
-                break;
-            case OutputFormat.WebM:
-                BuildWebMArgs(ref args, source, dest, settings.Fps, settings.Width);
-                break;
-            default:
-                throw new UnreachableException($"Unhandled format: {settings.Format}");
-        }
-    }
-
-    private static void BuildGifArgs(
-        ref FFmpegArgumentList args,
-        string source,
-        string dest,
-        int fps,
-        int width)
-    {
-        args.Add("-y");
-        args.Add("-i");
-        args.Add(source);
-        args.Add("-filter_complex");
-        args.Add(BuildGifFilterComplex(fps, width));
-        args.Add(dest);
-    }
-
-    /// <summary>
-    /// Builds GIF filter complex string. Computes exact length upfront to avoid trimming.
-    /// </summary>
-    private static string BuildGifFilterComplex(int fps, int width)
-    {
-        const string paletteSuffix = ",split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=floyd_steinberg";
-
-        // Calculate exact length needed
-        Span<char> fpsChars = stackalloc char[4]; // max "120"
-        fps.TryFormat(fpsChars, out var fpsLen);
-        var fpsSpan = fpsChars[..fpsLen];
-
-        int totalLength;
-        int widthLen = 0;
-
-        if (width > 0)
-        {
-            // "scale={width}:-2:flags=lanczos,fps={fps}" + suffix
-            Span<char> widthChars = stackalloc char[5]; // max "7680"
-            width.TryFormat(widthChars, out widthLen);
-            totalLength = 6 + widthLen + 21 + fpsLen + paletteSuffix.Length;
-            // scale= + width + :-2:flags=lanczos,fps= + fps + suffix
-
-            return string.Create(totalLength, (width, fps, paletteSuffix), static (span, state) =>
-            {
-                var pos = 0;
-                "scale=".CopyTo(span);
-                pos = 6;
-                state.width.TryFormat(span[pos..], out var wLen);
-                pos += wLen;
-                ":-2:flags=lanczos,fps=".CopyTo(span[pos..]);
-                pos += 21;
-                state.fps.TryFormat(span[pos..], out var fLen);
-                pos += fLen;
-                state.paletteSuffix.CopyTo(span[pos..]);
-            });
-        }
-
-        // "fps={fps}" + suffix
-        totalLength = 4 + fpsLen + paletteSuffix.Length;
-
-        return string.Create(totalLength, (fps, paletteSuffix), static (span, state) =>
-        {
-            "fps=".CopyTo(span);
-            state.fps.TryFormat(span[4..], out var fLen);
-            state.paletteSuffix.CopyTo(span[(4 + fLen)..]);
-        });
-    }
-
-    private static void BuildMp4Args(
-        ref FFmpegArgumentList args,
-        string source,
-        string dest,
-        int fps,
-        int width)
-    {
-        args.Add("-y");
-        args.Add("-i");
-        args.Add(source);
-
-        if (width > 0)
-        {
-            args.Add("-vf");
-            args.Add(BuildScaleFilter(width));
-        }
-
-        args.Add("-c:v");
-        args.Add("libx264");
-        args.Add("-preset");
-        args.Add("medium");
-        args.Add("-crf");
-        args.Add("23");
-        args.Add("-r");
-        args.Add(FormatFps(fps));
-        args.Add("-pix_fmt");
-        args.Add("yuv420p");
-        args.Add("-movflags");
-        args.Add("+faststart");
-        args.Add(dest);
-    }
-
-    private static void BuildWebMArgs(
-        ref FFmpegArgumentList args,
-        string source,
-        string dest,
-        int fps,
-        int width)
-    {
-        args.Add("-y");
-        args.Add("-i");
-        args.Add(source);
-
-        if (width > 0)
-        {
-            args.Add("-vf");
-            args.Add(BuildScaleFilter(width));
-        }
-
-        args.Add("-c:v");
-        args.Add("libvpx-vp9");
-        args.Add("-crf");
-        args.Add("30");
-        args.Add("-b:v");
-        args.Add("0");
-        args.Add("-r");
-        args.Add(FormatFps(fps));
-        args.Add("-pix_fmt");
-        args.Add("yuv420p");
-        args.Add(dest);
-    }
-
-    /// <summary>
-    /// Formats FPS as string. Simple int.ToString() - JIT optimizes small int formatting well.
-    /// </summary>
-    private static string FormatFps(int fps) => fps.ToString();
-
-    /// <summary>
-    /// Builds scale filter string.
-    /// </summary>
-    private static string BuildScaleFilter(int width)
-    {
-        // "scale={width}:-2:flags=lanczos" - max 30 chars
-        const string prefix = "scale=";
-        const string suffix = ":-2:flags=lanczos";
-
-        Span<char> widthChars = stackalloc char[5];
-        width.TryFormat(widthChars, out var widthLen);
-
-        return string.Create(prefix.Length + widthLen + suffix.Length, width, static (span, w) =>
-        {
-            "scale=".CopyTo(span);
-            w.TryFormat(span[6..], out var len);
-            ":-2:flags=lanczos".CopyTo(span[(6 + len)..]);
-        });
-    }
-
-    private async Task<string> RunFFmpegAsync(
-        IFFmpegProcess process,
-        IProgress<ConversionProgress>? progress,
-        CancellationToken ct)
-    {
-        var stderrBuilder = Pools.StringBuilder.Get();
-        var startTime = Stopwatch.GetTimestamp();
-
-        // Single CTS with timeout, linked to user token
+        var command = BuildCommand(job);
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutCts.CancelAfter(Timeout);
-        var combinedToken = timeoutCts.Token;
 
+        ProcessResult processResult;
         try
         {
-            if (!process.Start())
-            {
-                throw new FFmpegException("Failed to start FFmpeg process", exitCode: -1, stderr: "");
-            }
-
-            var stderrTask = ReadStderrAsync(process, stderrBuilder, progress, startTime, combinedToken);
-
-            try
-            {
-                await process.WaitForExitAsync(combinedToken).ConfigureAwait(false);
-                await stderrTask.WaitAsync(TimeSpan.FromSeconds(5), CancellationToken.None)
-                    .ConfigureAwait(false);
-            }
-            catch (TimeoutException)
-            {
-                // Stderr reading took too long after process exit - acceptable
-            }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-            {
-                await process.KillSafelyAsync().ConfigureAwait(false);
-                throw new TimeoutException(
-                    $"FFmpeg conversion timed out after {Timeout.TotalMinutes:F1} minutes. Stderr: {stderrBuilder}");
-            }
-            catch (OperationCanceledException)
-            {
-                await process.KillSafelyAsync().ConfigureAwait(false);
-                throw;
-            }
-
-            var stderr = stderrBuilder.ToString();
-
-            if (process.ExitCode != 0)
-            {
-                throw new FFmpegException("FFmpeg conversion failed", process.ExitCode, stderr);
-            }
-
-            return stderr;
+            processResult = await _processRunner.RunAsync(command, timeoutCts.Token).ConfigureAwait(false);
         }
-        finally
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            Pools.StringBuilder.Return(stderrBuilder);
+            return Result<ConversionResult>.Fail($"FFmpeg conversion timed out after {Timeout.TotalMinutes:F1} minutes");
         }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return Result<ConversionResult>.Fail($"Failed to start FFmpeg: {ex.Message}");
+        }
+
+        if (processResult.ExitCode != 0)
+            return Result<ConversionResult>.Fail($"FFmpeg conversion failed: {processResult.StandardError}");
+
+        if (!File.Exists(job.OutputFile.Path))
+            return Result<ConversionResult>.Fail("FFmpeg completed but output file was not created");
+
+        return Result<ConversionResult>.Ok(new ConversionResult(job.OutputFile));
     }
 
-    private static async Task ReadStderrAsync(
-        IFFmpegProcess process,
-        StringBuilder buffer,
-        IProgress<ConversionProgress>? progress,
-        long startTimestamp,
-        CancellationToken ct)
+    internal static ProcessCommand BuildCommand(ConversionJob job)
     {
-        var reader = process.StandardError;
-        var charBuffer = ArrayPool<char>.Shared.Rent(CharBufferSize);
+        var args = new List<string>(18)
+        {
+            "-y",
+            "-i",
+            job.SourceFile.Path
+        };
 
-        try
+        switch (job.Profile)
         {
-            while (!ct.IsCancellationRequested)
-            {
-                var charsRead = await reader.ReadAsync(charBuffer.AsMemory(), ct).ConfigureAwait(false);
-                if (charsRead == 0)
-                    break;
+            case ConversionProfile.GifProfile gif:
+                args.Add("-filter_complex");
+                args.Add(BuildGifFilter(gif.FrameRate));
+                break;
 
-                buffer.Append(charBuffer.AsSpan(0, charsRead));
+            case ConversionProfile.Mp4Profile mp4:
+                args.Add("-c:v");
+                args.Add("libx264");
+                args.Add("-preset");
+                args.Add("medium");
+                args.Add("-crf");
+                args.Add("23");
+                args.Add("-r");
+                args.Add(mp4.FrameRate.ToString());
+                args.Add("-pix_fmt");
+                args.Add("yuv420p");
+                args.Add("-movflags");
+                args.Add("+faststart");
+                break;
 
-                if (progress is not null)
-                {
-                    var elapsed = Stopwatch.GetElapsedTime(startTimestamp);
-                    var lastLine = ExtractLastLine(charBuffer.AsSpan(0, charsRead));
-                    progress.Report(new ConversionProgress(lastLine, elapsed));
-                }
-            }
+            case ConversionProfile.WebMProfile webM:
+                args.Add("-c:v");
+                args.Add("libvpx-vp9");
+                args.Add("-crf");
+                args.Add("30");
+                args.Add("-b:v");
+                args.Add("0");
+                args.Add("-r");
+                args.Add(webM.FrameRate.ToString());
+                args.Add("-pix_fmt");
+                args.Add("yuv420p");
+                break;
+
+            default:
+                throw new UnreachableException($"Unhandled conversion profile: {job.Profile.GetType().Name}");
         }
-        catch (OperationCanceledException)
-        {
-            // Expected during cancellation
-        }
-        catch (IOException)
-        {
-            // Process may have exited
-        }
-        finally
-        {
-            ArrayPool<char>.Shared.Return(charBuffer);
-        }
+
+        args.Add(job.OutputFile.Path);
+        return new ProcessCommand("ffmpeg", args, ProcessIo.CaptureError);
     }
 
-    /// <summary>
-    /// SearchValues for vectorized newline search.
-    /// </summary>
-    private static readonly SearchValues<char> NewlineChars = SearchValues.Create(['\r', '\n']);
-
-    /// <summary>
-    /// Extracts last line from text span.
-    /// </summary>
-    private static string ExtractLastLine(ReadOnlySpan<char> text)
-    {
-        var span = text.TrimEnd();
-        var lastNewline = span.LastIndexOfAny(NewlineChars);
-        return lastNewline >= 0 ? span[(lastNewline + 1)..].ToString() : span.ToString();
-    }
-
+    private static string BuildGifFilter(ConversionFrameRate frameRate) =>
+        $"fps={frameRate},split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=floyd_steinberg";
 }
-
-

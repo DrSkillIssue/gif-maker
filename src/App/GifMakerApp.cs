@@ -17,13 +17,13 @@ public sealed class GifMakerApp : IDisposable
     private const string AppId = "com.gifmaker.app";
 
     private readonly Gtk.Application _app;
-    private readonly GlobalHotkey _hotkey;
     private readonly CancellationTokenSource _cts = new();
     private readonly Lock _lock = new();
     private readonly ILogger<GifMakerApp> _logger;
 
+    private GlobalHotkey? _hotkey;
     private MainWindow? _mainWindow;
-    private TrayIcon? _trayIcon;
+    private StatusNotifierTray? _trayIcon;
     private volatile Thread? _hotkeyThread;
     private int _disposed;
 
@@ -31,7 +31,6 @@ public sealed class GifMakerApp : IDisposable
     {
         _logger = logger ?? NullLogger<GifMakerApp>.Instance;
         _app = Gtk.Application.New(AppId, Gio.ApplicationFlags.FlagsNone);
-        _hotkey = new GlobalHotkey();
         _app.OnActivate += OnActivate;
     }
 
@@ -47,15 +46,25 @@ public sealed class GifMakerApp : IDisposable
     {
         ThrowIfDisposed();
 
-        // Register global hotkeys (best effort - may fail if already grabbed)
-        if (!_hotkey.Register(HotkeyAction.SelectArea))
-            _logger.LogWarning("Failed to register Ctrl+Alt+S hotkey");
+        // Initialize hotkeys AFTER GTK to avoid GDK type registration conflicts
+        try
+        {
+            _hotkey = new GlobalHotkey();
 
-        if (!_hotkey.Register(HotkeyAction.Screenshot))
-            _logger.LogWarning("Failed to register Print hotkey");
+            // Register global hotkeys (best effort - may fail if already grabbed)
+            if (!_hotkey.Register(HotkeyAction.SelectArea))
+                _logger.LogWarning("Failed to register Ctrl+Alt+S hotkey");
 
-        _hotkeyThread = new Thread(HotkeyLoop) { IsBackground = true, Name = "GifMaker-Hotkey" };
-        _hotkeyThread.Start();
+            if (!_hotkey.Register(HotkeyAction.Screenshot))
+                _logger.LogWarning("Failed to register Print hotkey");
+
+            _hotkeyThread = new Thread(HotkeyLoop) { IsBackground = true, Name = "GifMaker-Hotkey" };
+            _hotkeyThread.Start();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to initialize global hotkeys");
+        }
 
         return _app.RunWithSynchronizationContext(null);
     }
@@ -71,11 +80,9 @@ public sealed class GifMakerApp : IDisposable
             {
                 try
                 {
-                    _trayIcon = new TrayIcon();
-                    _trayIcon.ShowWindowRequested += OnTrayShowWindow;
-                    _trayIcon.ScreenshotRequested += OnTrayScreenshot;
-                    _trayIcon.RecordRequested += OnTrayRecord;
-                    _trayIcon.QuitRequested += OnTrayQuit;
+                    _trayIcon = new StatusNotifierTray(_app);
+                    _trayIcon.Activated += OnTrayShowWindow;
+                    _trayIcon.SecondaryActivated += OnTrayScreenshot;
                     _logger.LogDebug("System tray icon created");
                 }
                 catch (Exception ex)
@@ -134,58 +141,21 @@ public sealed class GifMakerApp : IDisposable
 
     private void OnTrayScreenshot()
     {
-        GLib.Functions.IdleAdd(0, () =>
+        lock (_lock)
         {
-            lock (_lock)
-            {
-                if (_mainWindow is null)
-                    _app.Activate();
-
-                _mainWindow?.TriggerScreenshotSelection();
-            }
-            return false;
-        });
-    }
-
-    private void OnTrayRecord()
-    {
-        GLib.Functions.IdleAdd(0, () =>
-        {
-            lock (_lock)
-            {
-                if (_mainWindow is null)
-                    _app.Activate();
-
-                _mainWindow?.SwitchToRecord();
-                _mainWindow?.Present();
-            }
-            return false;
-        });
-    }
-
-    private void OnTrayQuit()
-    {
-        GLib.Functions.IdleAdd(0, () =>
-        {
-            lock (_lock)
-            {
-                _trayIcon?.Dispose();
-                _trayIcon = null;
-                _mainWindow?.Destroy();
-                _mainWindow = null;
-                _app.Quit();
-            }
-            return false;
-        });
+            _mainWindow?.TriggerScreenshotSelection();
+        }
     }
 
     private void HotkeyLoop()
     {
         var ct = _cts.Token;
+        var hotkey = _hotkey;
+        if (hotkey is null) return;
 
         while (!ct.IsCancellationRequested)
         {
-            var action = _hotkey.WaitForHotkey(ct);
+            var action = hotkey.WaitForHotkey(ct);
             if (ct.IsCancellationRequested) break;
 
             // Hotkeys bring window to front and switch to appropriate tab
@@ -239,7 +209,7 @@ public sealed class GifMakerApp : IDisposable
         }
 
         _trayIcon?.Dispose();
-        _hotkey.Dispose();
+        _hotkey?.Dispose();
         _cts.Dispose();
     }
 }

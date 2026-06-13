@@ -22,7 +22,7 @@ public sealed class ScreenshotService
     /// </summary>
     public readonly record struct ScreenshotResult(
         string FilePath,
-        Rectangle Region,
+        ScreenRegion Region,
         CaptureMode Mode);
 
     /// <summary>
@@ -43,40 +43,26 @@ public sealed class ScreenshotService
     /// </summary>
     /// <param name="mode">Capture mode.</param>
     /// <param name="ct">Cancellation token.</param>
-    /// <returns>Rectangle to capture, or error.</returns>
-    public async Task<Result<Rectangle>> GetRegionAsync(CaptureMode mode, CancellationToken ct = default)
+    /// <returns>Region to capture, or error.</returns>
+    public async Task<Result<ScreenRegion>> GetRegionAsync(CaptureMode mode, CancellationToken ct = default)
     {
         return mode switch
         {
             CaptureMode.Selection => await GetSelectionRegionAsync(ct).ConfigureAwait(false),
             CaptureMode.Screen => GetFullScreenRegion(),
             CaptureMode.Window => await _windowGeometry.GetActiveWindowAsync(ct).ConfigureAwait(false),
-            _ => Result<Rectangle>.Fail($"Unknown capture mode: {mode}")
+            _ => Result<ScreenRegion>.Fail($"Unknown capture mode: {mode}")
         };
     }
 
-    /// <summary>
-    /// Captures a screenshot with the specified settings.
-    /// </summary>
-    /// <param name="region">Region to capture.</param>
-    /// <param name="mode">Capture mode (for result metadata).</param>
-    /// <param name="showPointer">Whether to include mouse pointer.</param>
-    /// <param name="fixedCursorPosition">Fixed cursor position for selection mode (captured before selection).</param>
-    /// <param name="outputDir">Output directory (defaults to ~/Pictures/Screenshots).</param>
-    /// <param name="ct">Cancellation token.</param>
-    /// <returns>Screenshot result with file path.</returns>
-    public async Task<Result<ScreenshotResult>> CaptureAsync(
-        Rectangle region,
-        CaptureMode mode,
-        bool showPointer = false,
-        (int X, int Y)? fixedCursorPosition = null,
-        string? outputDir = null,
-        CancellationToken ct = default)
+    public async Task<Result<ScreenshotResult>> CaptureAsync(ScreenshotRequest request, CancellationToken ct = default)
     {
-        var outputPath = OutputPaths.GenerateScreenshotPath(outputDir);
+        var outputPath = request.OutputTarget.ResolvePath();
 
         var settingsResult = ScreenshotCapture.CaptureSettings.Create(
-            region, showPointer, fixedCursorPosition: fixedCursorPosition);
+            request.Region,
+            request.ShowPointer,
+            fixedCursorPosition: request.FixedCursorPosition);
 
         return await settingsResult.Match<Task<Result<ScreenshotResult>>>(
             async settings =>
@@ -85,25 +71,25 @@ public sealed class ScreenshotService
                     .ConfigureAwait(false);
 
                 return captureResult.Match(
-                    path => Result<ScreenshotResult>.Ok(new ScreenshotResult(path, region, mode)),
+                    path => Result<ScreenshotResult>.Ok(new ScreenshotResult(path, request.Region, request.Mode)),
                     error => Result<ScreenshotResult>.Fail(error));
             },
             error => Task.FromResult(Result<ScreenshotResult>.Fail(error)))
             .ConfigureAwait(false);
     }
 
-    private async Task<Result<Rectangle>> GetSelectionRegionAsync(CancellationToken ct)
+    private async Task<Result<ScreenRegion>> GetSelectionRegionAsync(CancellationToken ct)
     {
         using var selector = new AreaSelector(_processRunner);
         return await selector.SelectAsync(ct).ConfigureAwait(false);
     }
 
-    private static Result<Rectangle> GetFullScreenRegion()
+    private static Result<ScreenRegion> GetFullScreenRegion()
     {
         var bounds = WindowPositioner.GetScreenBounds();
         if (bounds is null)
-            return Result<Rectangle>.Fail("Failed to get screen bounds");
+            return Result<ScreenRegion>.Fail("Failed to get screen bounds");
 
-        return Result<Rectangle>.Ok(new Rectangle(0, 0, bounds.Value.Width, bounds.Value.Height));
+        return ScreenRegion.Create(0, 0, bounds.Value.Width, bounds.Value.Height);
     }
 }

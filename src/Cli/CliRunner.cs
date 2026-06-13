@@ -64,30 +64,13 @@ public static class CliRunner
         return await regionResult.Match(
             async region =>
             {
-                if (!region.IsValid)
-                {
-                    Console.WriteLine("Selection cancelled.");
-                    return 0;
-                }
-
-                // Determine output path
-                string? outputDir = null;
-                string? outputPath = args.OutputPath;
-
-                if (outputPath is not null && Directory.Exists(outputPath))
-                {
-                    // User provided directory, not file
-                    outputDir = outputPath;
-                    outputPath = null;
-                }
-
-                // Capture
                 var result = await service.CaptureAsync(
-                    region,
-                    args.Mode,
-                    args.ShowPointer,
-                    cursorPos,
-                    outputDir,
+                    new ScreenshotRequest(
+                        region,
+                        args.Mode,
+                        args.ShowPointer,
+                        cursorPos,
+                        ScreenshotOutputTarget.FromPath(args.OutputPath)),
                     ct).ConfigureAwait(false);
 
                 return result.Match(
@@ -104,6 +87,12 @@ public static class CliRunner
             },
             error =>
             {
+                if (error == "Selection cancelled")
+                {
+                    Console.WriteLine("Selection cancelled.");
+                    return Task.FromResult(0);
+                }
+
                 Console.Error.WriteLine($"Error: {error}");
                 return Task.FromResult(1);
             }).ConfigureAwait(false);
@@ -120,20 +109,15 @@ public static class CliRunner
         return await regionResult.Match(
             async region =>
             {
-                if (!region.IsValid)
-                {
-                    Console.WriteLine("Selection cancelled.");
-                    return 0;
-                }
-
                 Console.WriteLine($"Recording {region.Width}x{region.Height} at {args.Fps}fps");
                 Console.WriteLine("Press Enter to stop recording...");
 
-                // Start recording
                 var recorder = new FFmpegRecorder();
                 try
                 {
-                    recorder.Start(region, args.Fps);
+                    var recordingSettings = FFmpegRecorder.RecordingSettings.Create(region, args.Fps)
+                        .GetValueOrThrow();
+                    recorder.Start(recordingSettings);
 
                     // Wait for Enter key or cancellation
                     var readTask = Task.Run(Console.ReadLine, ct);
@@ -154,18 +138,27 @@ public static class CliRunner
 
                     // Convert
                     Console.WriteLine($"Converting to {args.Format}...");
-                    var outputPath = OutputPaths.GenerateRecordingPath(args.Format, args.OutputDir);
+                    var outputPath = RecordingOutputPaths.GenerateRecordingPath(args.Format, args.OutputDir);
 
                     var converter = new FFmpegConverter();
-                    var settings = FFmpegConverter.ConversionSettings.CreateOrThrow(args.Format, args.Fps);
-                    await converter.ConvertAsync(recorder.TempPath, outputPath, settings, ct: ct)
-                        .ConfigureAwait(false);
+                    var profile = ConversionProfile.Create(args.Format, args.Fps).GetValueOrThrow();
+                    var job = ConversionJob.Create(recorder.TempPath, outputPath, profile).GetValueOrThrow();
+                    var conversionResult = await converter.ConvertAsync(job, ct).ConfigureAwait(false);
+
+                    if (!conversionResult.IsSuccess)
+                    {
+                        var message = conversionResult.Match(_ => "", error => error);
+                        Console.Error.WriteLine($"Error: {message}");
+                        return 1;
+                    }
+
+                    var converted = conversionResult.GetValueOrThrow();
 
                     // Cleanup temp
                     try { File.Delete(recorder.TempPath); }
                     catch { /* ignore */ }
 
-                    Console.WriteLine($"Saved: {outputPath}");
+                    Console.WriteLine($"Saved: {converted.OutputFile.Path}");
                     return 0;
                 }
                 catch (OperationCanceledException)
@@ -184,6 +177,12 @@ public static class CliRunner
             },
             error =>
             {
+                if (error == "Selection cancelled")
+                {
+                    Console.WriteLine("Selection cancelled.");
+                    return Task.FromResult(0);
+                }
+
                 Console.Error.WriteLine($"Error: {error}");
                 return Task.FromResult(1);
             }).ConfigureAwait(false);

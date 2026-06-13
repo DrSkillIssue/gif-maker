@@ -1,5 +1,6 @@
 using System.Runtime.Versioning;
 using GifMaker.Core;
+using GifMaker.X11;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -35,7 +36,7 @@ public sealed class ScreenshotCapture
     public readonly record struct CaptureSettings
     {
         /// <summary>Screen region to capture.</summary>
-        public Rectangle Region { get; }
+        public ScreenRegion Region { get; }
 
         /// <summary>X11 display identifier.</summary>
         public string Display { get; }
@@ -49,7 +50,7 @@ public sealed class ScreenshotCapture
         /// </summary>
         public (int X, int Y)? FixedCursorPosition { get; }
 
-        private CaptureSettings(Rectangle region, string display, bool showPointer, (int, int)? fixedCursorPosition)
+        private CaptureSettings(ScreenRegion region, string display, bool showPointer, (int, int)? fixedCursorPosition)
         {
             Region = region;
             Display = display;
@@ -65,14 +66,11 @@ public sealed class ScreenshotCapture
         /// <param name="display">X11 display (defaults to $DISPLAY or :0).</param>
         /// <param name="fixedCursorPosition">Fixed cursor position; if null and showPointer is true, uses live position.</param>
         public static Result<CaptureSettings> Create(
-            Rectangle region,
+            ScreenRegion region,
             bool showPointer = false,
             string? display = null,
             (int X, int Y)? fixedCursorPosition = null)
         {
-            if (!region.IsValid)
-                return Result<CaptureSettings>.Fail("Region must have positive dimensions");
-
             if (region.Width < MinDimension || region.Height < MinDimension)
                 return Result<CaptureSettings>.Fail($"Region too small (min {MinDimension}x{MinDimension})");
 
@@ -80,15 +78,6 @@ public sealed class ScreenshotCapture
             return Result<CaptureSettings>.Ok(new CaptureSettings(region, resolvedDisplay, showPointer, fixedCursorPosition));
         }
 
-        /// <summary>
-        /// Creates settings, throwing if invalid.
-        /// </summary>
-        public static CaptureSettings CreateOrThrow(
-            Rectangle region,
-            bool showPointer = false,
-            string? display = null,
-            (int X, int Y)? fixedCursorPosition = null) =>
-            Create(region, showPointer, display, fixedCursorPosition).GetValueOrThrow();
     }
 
     /// <summary>
@@ -106,7 +95,7 @@ public sealed class ScreenshotCapture
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(outputPath);
 
-        var args = BuildArguments(settings, outputPath);
+        var command = BuildCommand(settings, outputPath);
 
         _logger.LogDebug(
             "Capturing screenshot: {Width}x{Height} at ({X},{Y}) on {Display}",
@@ -116,7 +105,7 @@ public sealed class ScreenshotCapture
         ProcessResult result;
         try
         {
-            result = await _processRunner.RunAsync(FFmpegPath, args, ct).ConfigureAwait(false);
+            result = await _processRunner.RunAsync(command, ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -141,22 +130,7 @@ public sealed class ScreenshotCapture
         return Result<string>.Ok(outputPath);
     }
 
-    /// <summary>
-    /// Convenience overload - captures a region to specified path.
-    /// </summary>
-    public Task<Result<string>> CaptureAsync(
-        Rectangle region,
-        string outputPath,
-        bool showPointer = false,
-        CancellationToken ct = default)
-    {
-        var settingsResult = CaptureSettings.Create(region, showPointer);
-        return settingsResult.Match(
-            settings => CaptureAsync(settings, outputPath, ct),
-            error => Task.FromResult(Result<string>.Fail(error)));
-    }
-
-    private static string[] BuildArguments(CaptureSettings settings, string outputPath)
+    private static ProcessCommand BuildCommand(CaptureSettings settings, string outputPath)
     {
         var region = settings.Region;
         var videoSize = $"{region.Width}x{region.Height}";
@@ -176,35 +150,39 @@ public sealed class ScreenshotCapture
                 // Arrow pointing top-left: main body + diagonal line
                 var filter = BuildCursorFilter(relX, relY);
 
-                return
-                [
-                    "-y",
-                    "-f", "x11grab",
-                    "-draw_mouse", "0",      // Don't draw live cursor
-                    "-video_size", videoSize,
-                    "-i", input,
-                    "-vf", filter,
-                    "-frames:v", "1",
-                    "-update", "1",
-                    outputPath
-                ];
+                return new ProcessCommand(
+                    FFmpegPath,
+                    [
+                        "-y",
+                        "-f", "x11grab",
+                        "-draw_mouse", "0",
+                        "-video_size", videoSize,
+                        "-i", input,
+                        "-vf", filter,
+                        "-frames:v", "1",
+                        "-update", "1",
+                        outputPath
+                    ],
+                    ProcessIo.CaptureError);
             }
         }
 
         // Standard capture (with or without live cursor)
         var drawMouse = settings.ShowPointer ? "1" : "0";
 
-        return
-        [
-            "-y",                    // Overwrite output
-            "-f", "x11grab",         // X11 screen capture
-            "-draw_mouse", drawMouse,
-            "-video_size", videoSize,
-            "-i", input,
-            "-frames:v", "1",        // Capture single frame
-            "-update", "1",          // Single image output mode
-            outputPath
-        ];
+        return new ProcessCommand(
+            FFmpegPath,
+            [
+                "-y",
+                "-f", "x11grab",
+                "-draw_mouse", drawMouse,
+                "-video_size", videoSize,
+                "-i", input,
+                "-frames:v", "1",
+                "-update", "1",
+                outputPath
+            ],
+            ProcessIo.CaptureError);
     }
 
     /// <summary>

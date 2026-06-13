@@ -34,7 +34,7 @@ public sealed partial class AreaSelector : IDisposable
     /// Blocks until user selects a region or cancels.
     /// </summary>
     /// <returns>Result containing selected region on success, or error on failure.</returns>
-    public async Task<Result<Rectangle>> SelectAsync(CancellationToken ct = default)
+    public async Task<Result<ScreenRegion>> SelectAsync(CancellationToken ct = default)
     {
         ThrowIfDisposed();
 
@@ -44,34 +44,37 @@ public sealed partial class AreaSelector : IDisposable
         ProcessResult result;
         try
         {
-            result = await _processRunner.RunAsync("slop", args, ct).ConfigureAwait(false);
+            result = await _processRunner.RunAsync(
+                new ProcessCommand("slop", args, ProcessIo.Capture), ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return Result<Rectangle>.Fail($"Failed to start slop: {ex.Message}");
+            return Result<ScreenRegion>.Fail($"Failed to start slop: {ex.Message}");
         }
 
         // Exit code 1 = cancelled (Escape pressed)
         if (result.ExitCode == 1)
-            return Result<Rectangle>.Fail("Selection cancelled");
+            return Result<ScreenRegion>.Fail("Selection cancelled");
 
         if (result.ExitCode != 0)
-            return Result<Rectangle>.Fail($"slop failed with exit code {result.ExitCode}: {result.StandardError}");
+            return Result<ScreenRegion>.Fail($"slop failed with exit code {result.ExitCode}: {result.StandardError}");
 
         if (string.IsNullOrWhiteSpace(result.StandardOutput))
-            return Result<Rectangle>.Fail("slop produced no output");
+            return Result<ScreenRegion>.Fail("slop produced no output");
 
         // Parse output: WxH+X+Y (e.g., "640x480+100+200")
         var match = GeometryRegex().Match(result.StandardOutput);
         if (!match.Success)
-            return Result<Rectangle>.Fail($"Invalid slop output format: {result.StandardOutput}");
+            return Result<ScreenRegion>.Fail($"Invalid slop output format: {result.StandardOutput}");
 
         var width = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
         var height = int.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture);
         var x = int.Parse(match.Groups[3].Value, CultureInfo.InvariantCulture);
         var y = int.Parse(match.Groups[4].Value, CultureInfo.InvariantCulture);
 
-        return Rectangle.CreateValidated(x, y, width, height, "Selected region has zero area");
+        return ScreenRegion.Create(x, y, width, height).Match(
+            Result<ScreenRegion>.Ok,
+            _ => Result<ScreenRegion>.Fail("Selected region has zero area"));
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed != 0, this);

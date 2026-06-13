@@ -28,13 +28,13 @@ public sealed class RecordPage : Box
         public sealed record Selecting : PageState;
 
         /// <summary>Area selected, ready to record.</summary>
-        public sealed record Ready(Rectangle Region, RegionOverlay Overlay) : PageState;
+        public sealed record Ready(ScreenRegion Region, RegionOverlay Overlay) : PageState;
 
         /// <summary>Recording in progress.</summary>
-        public sealed record Recording(Rectangle Region, RegionOverlay Overlay, FFmpegRecorder Recorder, int Fps) : PageState;
+        public sealed record Recording(ScreenRegion Region, RegionOverlay Overlay, FFmpegRecorder Recorder, int Fps) : PageState;
 
         /// <summary>Stopping recording.</summary>
-        public sealed record Stopping(Rectangle Region, RegionOverlay Overlay, FFmpegRecorder Recorder, int Fps) : PageState;
+        public sealed record Stopping(ScreenRegion Region, RegionOverlay Overlay, FFmpegRecorder Recorder, int Fps) : PageState;
 
         /// <summary>Converting recorded video.</summary>
         public sealed record Converting(string TempPath, string OutputPath, int Fps, CancellationTokenSource Cts, RegionOverlay Overlay) : PageState;
@@ -184,7 +184,7 @@ public sealed class RecordPage : Box
         var outputRow = Box.New(Orientation.Horizontal, 8);
         outputRow.Append(Label.New("Save to:"));
         outputDirEntry = Entry.New();
-        outputDirEntry.SetText(OutputPaths.GetDefaultVideoDir());
+        outputDirEntry.SetText(RecordingOutputPaths.GetDefaultVideoDir());
         outputDirEntry.Hexpand = true;
         outputDirEntry.TooltipText = "Directory where recordings will be saved";
         outputRow.Append(outputDirEntry);
@@ -302,26 +302,14 @@ public sealed class RecordPage : Box
             result.Match(
                 region =>
                 {
-                    if (region.IsValid)
+                    var overlay = new RegionOverlay(region, 3);
+                    overlay.Show();
+                    GLib.Functions.IdleAdd(0, () =>
                     {
-                        var overlay = new RegionOverlay(region, 3);
-                        overlay.Show();
-                        GLib.Functions.IdleAdd(0, () =>
-                        {
-                            TransitionTo(new PageState.Ready(region, overlay));
-                            mainWindow?.ShowAgain();
-                            return false;
-                        });
-                    }
-                    else
-                    {
-                        GLib.Functions.IdleAdd(0, () =>
-                        {
-                            TransitionTo(new PageState.Idle());
-                            mainWindow?.ShowAgain();
-                            return false;
-                        });
-                    }
+                        TransitionTo(new PageState.Ready(region, overlay));
+                        mainWindow?.ShowAgain();
+                        return false;
+                    });
                 },
                 error =>
                 {
@@ -379,7 +367,7 @@ public sealed class RecordPage : Box
         ApplyUiFromState();
     }
 
-    private void StartRecording(Rectangle region, RegionOverlay overlay)
+    private void StartRecording(ScreenRegion region, RegionOverlay overlay)
     {
         var fpsIndex = _fpsCombo.Active;
         var fps = fpsIndex >= 0 && fpsIndex < FpsOptions.Length
@@ -387,7 +375,8 @@ public sealed class RecordPage : Box
             : FpsOptions[DefaultFpsIndex].Value;
 
         var recorder = new FFmpegRecorder();
-        recorder.Start(region, fps);
+        var settings = FFmpegRecorder.RecordingSettings.Create(region, fps).GetValueOrThrow();
+        recorder.Start(settings);
 
         TransitionTo(new PageState.Recording(region, overlay, recorder, fps));
     }
@@ -411,15 +400,22 @@ public sealed class RecordPage : Box
             TransitionTo(new PageState.Converting(tempPath, outputPath, fps, cts, overlay));
 
             var converter = new FFmpegConverter();
-            var settings = FFmpegConverter.ConversionSettings.CreateOrThrow(format, fps);
-            await converter.ConvertAsync(tempPath, outputPath, settings, ct: cts.Token);
+            var profile = ConversionProfile.Create(format, fps).GetValueOrThrow();
+            var job = ConversionJob.Create(tempPath, outputPath, profile).GetValueOrThrow();
+            var conversionResult = await converter.ConvertAsync(job, cts.Token);
+            if (!conversionResult.IsSuccess)
+            {
+                var message = conversionResult.Match(_ => "", error => error);
+                throw new InvalidOperationException(message);
+            }
+            var converted = conversionResult.GetValueOrThrow();
 
             cts.Dispose();
             cts = null;
             overlay.Dispose();
 
-            TransitionTo(new PageState.Saved(outputPath));
-            _logger.LogInformation("Saved: {OutputPath}", outputPath);
+            TransitionTo(new PageState.Saved(converted.OutputFile.Path));
+            _logger.LogInformation("Saved: {OutputPath}", converted.OutputFile.Path);
         }
         catch (OperationCanceledException)
         {
@@ -449,19 +445,19 @@ public sealed class RecordPage : Box
         }
     }
 
-    private OutputFormat GetSelectedFormat() => _formatCombo.Active switch
+    private ConversionFormat GetSelectedFormat() => _formatCombo.Active switch
     {
-        0 => OutputFormat.Gif,
-        1 => OutputFormat.Mp4,
-        2 => OutputFormat.WebM,
-        _ => OutputFormat.Gif
+        0 => ConversionFormat.Gif,
+        1 => ConversionFormat.Mp4,
+        2 => ConversionFormat.WebM,
+        _ => ConversionFormat.Gif
     };
 
-    private string GenerateOutputPath(OutputFormat format)
+    private string GenerateOutputPath(ConversionFormat format)
     {
         var outputDir = _outputDirEntry.GetText();
         var dir = string.IsNullOrWhiteSpace(outputDir) ? null : outputDir;
-        return OutputPaths.GenerateRecordingPath(format, dir);
+        return RecordingOutputPaths.GenerateRecordingPath(format, dir);
     }
 
     private void CleanupTempFile(string path)
@@ -482,7 +478,7 @@ public sealed class RecordPage : Box
             return;
         }
 
-        if (!_processRunner.StartDetached("xdg-open", [saved.FilePath]))
+        if (!_processRunner.StartDetached(new ProcessCommand("xdg-open", [saved.FilePath], ProcessIo.Detached)))
         {
             _logger.LogError("Failed to open file with xdg-open");
             TransitionTo(new PageState.Error("Failed to open file"));

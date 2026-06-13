@@ -1,4 +1,4 @@
-using GifMaker.Core;
+using GifMaker.Conversion;
 using GifMaker.Screenshot;
 
 namespace GifMaker.Cli;
@@ -27,7 +27,7 @@ public abstract record CliArgs
 
     /// <summary>Start recording (requires stop signal).</summary>
     public sealed record Record(
-        OutputFormat Format,
+        ConversionFormat Format,
         int Fps,
         string? OutputDir) : CliArgs;
 
@@ -155,7 +155,7 @@ public static class CliParser
 
     private static CliArgs ParseRecord(ReadOnlySpan<string> args)
     {
-        var format = OutputFormat.Gif;
+        var format = ConversionFormat.Gif;
         var fps = 30;
         string? outputDir = null;
 
@@ -218,12 +218,12 @@ public static class CliParser
             _ => null
         };
 
-    private static OutputFormat? TryParseFormat(string value) =>
+    private static ConversionFormat? TryParseFormat(string value) =>
         value.ToLowerInvariant() switch
         {
-            "gif" => OutputFormat.Gif,
-            "mp4" => OutputFormat.Mp4,
-            "webm" => OutputFormat.WebM,
+            "gif" => ConversionFormat.Gif,
+            "mp4" => ConversionFormat.Mp4,
+            "webm" => ConversionFormat.WebM,
             _ => null
         };
 }

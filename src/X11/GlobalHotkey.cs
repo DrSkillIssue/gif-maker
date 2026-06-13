@@ -1,5 +1,4 @@
 using System.Runtime.Versioning;
-using GifMaker.Core;
 using static GifMaker.X11.X11Interop;
 using static GifMaker.X11.LibC;
 

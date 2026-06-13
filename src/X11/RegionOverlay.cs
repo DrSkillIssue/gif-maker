@@ -17,7 +17,7 @@ public sealed class RegionOverlay : IDisposable
     private nint _window;
     private nint _shapeMask;
     private nint _gc;
-    private readonly Rectangle _region;
+    private readonly ScreenRegion _region;
     private readonly int _borderWidth;
     private int _disposed;
 
@@ -27,7 +27,7 @@ public sealed class RegionOverlay : IDisposable
     /// <param name="region">Screen region to outline.</param>
     /// <param name="borderWidth">Width of the border in pixels.</param>
     /// <exception cref="InvalidOperationException">Failed to connect to X11 display.</exception>
-    public RegionOverlay(Rectangle region, int borderWidth = 3)
+    public RegionOverlay(ScreenRegion region, int borderWidth = 3)
     {
         _region = region;
         _borderWidth = borderWidth;

@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Diagnostics;
 using System.Text;
 using GifMaker.Core;
+using GifMaker.X11;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -32,7 +33,7 @@ public sealed class FFmpegRecorder : IAsyncDisposable, IDisposable
 
         /// <summary>FFmpeg process is running.</summary>
         public sealed record Recording(
-            IFFmpegRecordingProcess Process,
+            IInteractiveProcess Process,
             Task<string> StderrTask,
             long StartTimestamp) : RecorderState;
 
@@ -69,7 +70,7 @@ public sealed class FFmpegRecorder : IAsyncDisposable, IDisposable
     #endregion
 
     private readonly ILogger<FFmpegRecorder> _logger;
-    private readonly IFFmpegProcessFactory<IFFmpegRecordingProcess> _processFactory;
+    private readonly IProcessLauncher _processLauncher;
     private readonly Lock _stateLock = new();
     private RecorderState _state = RecorderState.Idle.Instance;
     private int _disposed;
@@ -85,11 +86,11 @@ public sealed class FFmpegRecorder : IAsyncDisposable, IDisposable
     /// </summary>
     public FFmpegRecorder(
         ILogger<FFmpegRecorder>? logger = null,
-        IFFmpegProcessFactory<IFFmpegRecordingProcess>? processFactory = null,
+        IProcessLauncher? processLauncher = null,
         string? tempPath = null)
     {
         _logger = logger ?? NullLogger<FFmpegRecorder>.Instance;
-        _processFactory = processFactory ?? Core.FFmpegRecordingProcessFactory.Default;
+        _processLauncher = processLauncher ?? ProcessRunner.Default;
         TempPath = tempPath ?? GenerateTempPath();
     }
 
@@ -122,7 +123,7 @@ public sealed class FFmpegRecorder : IAsyncDisposable, IDisposable
     public readonly struct RecordingSettings : IEquatable<RecordingSettings>
     {
         /// <summary>Screen region to capture.</summary>
-        public Rectangle Region { get; }
+        public ScreenRegion Region { get; }
 
         /// <summary>Frames per second (1-240).</summary>
         public int Fps { get; }
@@ -136,7 +137,7 @@ public sealed class FFmpegRecorder : IAsyncDisposable, IDisposable
         /// <summary>Capture height (even, derived from region).</summary>
         public int CaptureHeight { get; }
 
-        private RecordingSettings(Rectangle region, int fps, string display)
+        private RecordingSettings(ScreenRegion region, int fps, string display)
         {
             Region = region;
             Fps = fps;
@@ -150,13 +151,10 @@ public sealed class FFmpegRecorder : IAsyncDisposable, IDisposable
         /// Creates validated settings, returning error if invalid.
         /// </summary>
         public static Result<RecordingSettings> Create(
-            Rectangle region,
+            ScreenRegion region,
             int fps = 30,
             string? display = null)
         {
-            if (!region.IsValid)
-                return Result<RecordingSettings>.Fail("Region must have positive dimensions");
-
             if (region.Width < MinDimension || region.Height < MinDimension)
                 return Result<RecordingSettings>.Fail($"Region too small (min {MinDimension}x{MinDimension})");
 
@@ -167,15 +165,6 @@ public sealed class FFmpegRecorder : IAsyncDisposable, IDisposable
 
             return Result<RecordingSettings>.Ok(new RecordingSettings(region, fps, resolvedDisplay));
         }
-
-        /// <summary>
-        /// Creates settings, throwing if invalid.
-        /// </summary>
-        public static RecordingSettings CreateOrThrow(
-            Rectangle region,
-            int fps = 30,
-            string? display = null) =>
-            Create(region, fps, display).GetValueOrThrow();
 
         public bool Equals(RecordingSettings other) =>
             Region == other.Region && Fps == other.Fps && Display == other.Display;
@@ -207,16 +196,7 @@ public sealed class FFmpegRecorder : IAsyncDisposable, IDisposable
                 "Starting recording: {Width}x{Height} at {Fps}fps on {Display}",
                 settings.CaptureWidth, settings.CaptureHeight, settings.Fps, settings.Display);
 
-            var args = new FFmpegArgumentList();
-            BuildArguments(ref args, settings, TempPath);
-
-            var process = _processFactory.Create(args.AsSpan());
-
-            if (!process.Start())
-            {
-                process.Dispose();
-                throw new InvalidOperationException("Failed to start FFmpeg process");
-            }
+            var process = _processLauncher.StartInteractive(BuildCommand(settings, TempPath));
 
             var stderrTask = ReadStderrAsync(process);
             var startTimestamp = Stopwatch.GetTimestamp();
@@ -226,41 +206,31 @@ public sealed class FFmpegRecorder : IAsyncDisposable, IDisposable
         }
     }
 
-    /// <summary>
-    /// Overload for backward compatibility. Validates and starts recording.
-    /// </summary>
-    public void Start(Rectangle region, int fps = 30)
+    private static ProcessCommand BuildCommand(RecordingSettings settings, string outputPath)
     {
-        var settings = RecordingSettings.CreateOrThrow(region, fps);
-        Start(settings);
-    }
-
-    /// <summary>
-    /// Builds FFmpeg argument list using stack-allocated storage.
-    /// </summary>
-    private static void BuildArguments(
-        ref FFmpegArgumentList args,
-        RecordingSettings settings,
-        string outputPath)
-    {
-        args.Add("-y");
-        args.Add("-f");
-        args.Add("x11grab");
-        args.Add("-framerate");
-        args.Add(settings.Fps.ToString());
-        args.Add("-video_size");
-        args.Add(FormatVideoSize(settings.CaptureWidth, settings.CaptureHeight));
-        args.Add("-i");
-        args.Add(FormatInput(settings.Display, settings.Region.X, settings.Region.Y));
-        args.Add("-c:v");
-        args.Add("libx264");
-        args.Add("-preset");
-        args.Add("ultrafast");
-        args.Add("-crf");
-        args.Add("18");
-        args.Add("-pix_fmt");
-        args.Add("yuv420p");
-        args.Add(outputPath);
+        return new ProcessCommand(
+            "ffmpeg",
+            [
+                "-y",
+                "-f",
+                "x11grab",
+                "-framerate",
+                settings.Fps.ToString(),
+                "-video_size",
+                FormatVideoSize(settings.CaptureWidth, settings.CaptureHeight),
+                "-i",
+                FormatInput(settings.Display, settings.Region.X, settings.Region.Y),
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-crf",
+                "18",
+                "-pix_fmt",
+                "yuv420p",
+                outputPath
+            ],
+            ProcessIo.Interactive);
     }
 
 
@@ -311,7 +281,7 @@ public sealed class FFmpegRecorder : IAsyncDisposable, IDisposable
     /// Reads stderr asynchronously, returning full output.
     /// Uses pooled buffer for zero steady-state allocation.
     /// </summary>
-    private static async Task<string> ReadStderrAsync(IFFmpegRecordingProcess process)
+    private static async Task<string> ReadStderrAsync(IInteractiveProcess process)
     {
         var builder = Pools.StringBuilder.Get();
         var buffer = ArrayPool<char>.Shared.Rent(StderrBufferSize);
@@ -355,7 +325,7 @@ public sealed class FFmpegRecorder : IAsyncDisposable, IDisposable
     /// </summary>
     /// <returns>Recording statistics.</returns>
     /// <exception cref="InvalidOperationException">No recording in progress.</exception>
-    /// <exception cref="FFmpegException">FFmpeg failed.</exception>
+    /// <exception cref="RecordingException">FFmpeg failed.</exception>
     /// <exception cref="OperationCanceledException">Cancelled.</exception>
     public async Task<RecordingResult> StopAsync(CancellationToken ct = default)
     {
@@ -378,7 +348,7 @@ public sealed class FFmpegRecorder : IAsyncDisposable, IDisposable
             {
                 var error = await GetStderrSafeAsync(stderrTask).ConfigureAwait(false);
                 _logger.LogError("FFmpeg exited unexpectedly with code {ExitCode}", process.ExitCode);
-                throw new FFmpegException("FFmpeg exited unexpectedly", process.ExitCode, error);
+                throw new RecordingException("FFmpeg exited unexpectedly", process.ExitCode, error);
             }
 
             // Send quit signal
@@ -398,7 +368,7 @@ public sealed class FFmpegRecorder : IAsyncDisposable, IDisposable
                 await process.KillSafelyAsync().ConfigureAwait(false);
                 var error = await GetStderrSafeAsync(stderrTask).ConfigureAwait(false);
                 _logger.LogError("FFmpeg failed to stop within timeout");
-                throw new FFmpegException("FFmpeg failed to stop in time", -1, error);
+                throw new RecordingException("FFmpeg failed to stop in time", -1, error);
             }
 
             // Validate exit
@@ -406,7 +376,7 @@ public sealed class FFmpegRecorder : IAsyncDisposable, IDisposable
             {
                 var error = await GetStderrSafeAsync(stderrTask).ConfigureAwait(false);
                 _logger.LogError("FFmpeg recording failed with exit code {ExitCode}", process.ExitCode);
-                throw new FFmpegException("FFmpeg recording failed", process.ExitCode, error);
+                throw new RecordingException("FFmpeg recording failed", process.ExitCode, error);
             }
 
             // Verify output
@@ -414,7 +384,7 @@ public sealed class FFmpegRecorder : IAsyncDisposable, IDisposable
             {
                 var error = await GetStderrSafeAsync(stderrTask).ConfigureAwait(false);
                 _logger.LogError("FFmpeg did not produce output file");
-                throw new FFmpegException("FFmpeg did not produce output", 0, error);
+                throw new RecordingException("FFmpeg did not produce output", 0, error);
             }
 
             var duration = Stopwatch.GetElapsedTime(startTimestamp);
@@ -443,7 +413,7 @@ public sealed class FFmpegRecorder : IAsyncDisposable, IDisposable
         }
     }
 
-    private async Task SendQuitSignalAsync(IFFmpegRecordingProcess process, CancellationToken ct)
+    private async Task SendQuitSignalAsync(IInteractiveProcess process, CancellationToken ct)
     {
         try
         {
@@ -529,5 +499,3 @@ public sealed class FFmpegRecorder : IAsyncDisposable, IDisposable
         }
     }
 }
-
-
