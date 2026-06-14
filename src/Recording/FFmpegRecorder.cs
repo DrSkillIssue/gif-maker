@@ -1,6 +1,5 @@
 using System.Buffers;
 using System.Diagnostics;
-using System.Text;
 using GifMaker.Core;
 using GifMaker.X11;
 using Microsoft.Extensions.Logging;

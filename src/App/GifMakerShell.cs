@@ -96,7 +96,6 @@ internal sealed class GifMakerShell : IDisposable
                     {
                         var window = EnsureWindow();
                         window.Render(new AppViewState.ActiveTab(AppTab.Screenshot));
-                        window.Present();
                         window.CaptureSelection();
                     }
                     break;

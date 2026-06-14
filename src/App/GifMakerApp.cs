@@ -11,7 +11,8 @@ namespace GifMaker.App;
 [SupportedOSPlatform("linux")]
 public sealed class GifMakerApp : IDisposable
 {
-    private const string AppId = "com.gifmaker.app";
+    private const string DefaultAppId = "com.gifmaker.app";
+    internal const string AppIdEnvironmentVariable = "GIFMAKER_APP_ID";
 
     private readonly Gtk.Application _app;
     private readonly GifMakerShell _shell;
@@ -23,7 +24,10 @@ public sealed class GifMakerApp : IDisposable
         _logger = logger ?? NullLogger<GifMakerApp>.Instance;
         var processRunner = ProcessRunner.Default;
         var desktopFiles = new DesktopFileActions(processRunner);
-        _app = Gtk.Application.New(AppId, Gio.ApplicationFlags.FlagsNone);
+        var configuredAppId = Environment.GetEnvironmentVariable(AppIdEnvironmentVariable);
+        _app = Gtk.Application.New(
+            string.IsNullOrWhiteSpace(configuredAppId) ? DefaultAppId : configuredAppId,
+            Gio.ApplicationFlags.FlagsNone);
         var services = new AppServices(
             CreateRecordingSession: () => new RecordingSession(processRunner),
             CreateScreenshotSession: () => new ScreenshotSession(_app, processRunner),

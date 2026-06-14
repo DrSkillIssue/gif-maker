@@ -1,5 +1,3 @@
-using System.Collections.Frozen;
-using System.Runtime.CompilerServices;
 using System.Text;
 using Gdk;
 using GifMaker.Core;
@@ -14,24 +12,11 @@ namespace GifMaker.App;
 /// </summary>
 public sealed class DesktopFileActions
 {
-    private const int MaxProviders = 4;
+    private const int MaxProviders = 3;
 
     private const string UriListMime = "text/uri-list";
     private const string GnomeCopiedFilesMime = "x-special/gnome-copied-files";
     private const string TextPlainMime = "text/plain";
-    private const string DefaultMime = "application/octet-stream";
-
-    private static readonly FrozenDictionary<string, string> ExtensionToMime =
-        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-        {
-            [".gif"] = "image/gif",
-            [".png"] = "image/png",
-            [".jpg"] = "image/jpeg",
-            [".jpeg"] = "image/jpeg",
-            [".webp"] = "image/webp",
-            [".mp4"] = "video/mp4",
-            [".webm"] = "video/webm",
-        }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
     private readonly IProcessRunner _processRunner;
     private readonly ILogger<DesktopFileActions> _logger;
@@ -65,7 +50,7 @@ public sealed class DesktopFileActions
             : Result<SavedMedia>.Fail("Failed to open folder");
     }
 
-    public Result<SavedMedia> CopyToClipboard(Gtk.Widget owner, SavedMedia media)
+    public Result<SavedMedia> CopyFileToClipboard(Gtk.Widget owner, SavedMedia media)
     {
         ArgumentNullException.ThrowIfNull(owner);
 
@@ -86,15 +71,6 @@ public sealed class DesktopFileActions
 
         try
         {
-            var mimeType = GetMimeType(media.Path);
-
-            if (IsImageMime(mimeType))
-            {
-                var imageProvider = CreateImageProvider(media.Path, mimeType);
-                if (imageProvider is not null)
-                    providers[providerCount++] = imageProvider;
-            }
-
             var uriListProvider = CreateUriListProvider(uri);
             providers[providerCount++] = uriListProvider;
 
@@ -148,23 +124,8 @@ public sealed class DesktopFileActions
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            _logger.LogError(ex, "Clipboard copy failed for {FilePath}", media.Path);
+            _logger.LogError(ex, "Clipboard file copy failed for {FilePath}", media.Path);
             return Result<SavedMedia>.Fail(ex.Message);
-        }
-    }
-
-    private ContentProvider? CreateImageProvider(string filePath, string mimeType)
-    {
-        try
-        {
-            var fileBytes = File.ReadAllBytes(filePath);
-            var gBytes = Bytes.New(fileBytes);
-            return ContentProvider.NewForBytes(mimeType, gBytes);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            _logger.LogWarning(ex, "Failed to read image for clipboard: {Path}", filePath);
-            return null;
         }
     }
 
@@ -176,15 +137,4 @@ public sealed class DesktopFileActions
 
     private static ContentProvider CreateTextPlainProvider(string filePath) =>
         ContentProvider.NewForBytes(TextPlainMime, Bytes.New(Encoding.UTF8.GetBytes(filePath)));
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static string GetMimeType(string filePath)
-    {
-        var extension = Path.GetExtension(filePath);
-        return ExtensionToMime.GetValueOrDefault(extension, DefaultMime);
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static bool IsImageMime(string mimeType) =>
-        mimeType.AsSpan().StartsWith("image/", StringComparison.Ordinal);
 }

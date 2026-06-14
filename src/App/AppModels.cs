@@ -1,6 +1,5 @@
 using GifMaker.Conversion;
 using GifMaker.Core;
-using GifMaker.Screenshot;
 
 namespace GifMaker.App;
 
@@ -89,9 +88,11 @@ public abstract record ScreenshotViewState
     public sealed record Idle : ScreenshotViewState;
     public sealed record Selecting : ScreenshotViewState;
     public sealed record Capturing(ScreenshotCaptureKind Kind) : ScreenshotViewState;
-    public sealed record Saved(SavedMedia Media, ScreenRegion Region, Gdk.Texture? Preview) : ScreenshotViewState;
+    public sealed record Saved(SavedMedia Media, ScreenRegion Region, ScreenshotImage Image) : ScreenshotViewState;
     public sealed record Error(string Message) : ScreenshotViewState;
 }
+
+public sealed record ScreenshotImage(Gdk.Texture Preview, byte[] PngBytes);
 
 public readonly record struct SavedMedia(string Path);
 

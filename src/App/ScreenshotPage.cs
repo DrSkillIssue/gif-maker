@@ -2,7 +2,6 @@ using System.Runtime.Versioning;
 using System.Text;
 using Gtk;
 using GifMaker.Core;
-using GifMaker.Screenshot;
 
 namespace GifMaker.App;
 
@@ -26,7 +25,6 @@ public sealed class ScreenshotPage : Box
     private readonly Button _newButton;
     private readonly Box _resultBox;
 
-    private bool _shortcutsEnabled = true;
     private Gdk.Texture? _previewTexture;
     private DragSource? _previewDragSource;
 
@@ -117,15 +115,6 @@ public sealed class ScreenshotPage : Box
         _resultBox.Visible = false;
         Append(_resultBox);
 
-        var hintLabel = Label.New(null);
-        hintLabel.SetMarkup("<span size='small' color='gray'>S=Selection  C=Screen  W=Window  P=Pointer toggle</span>");
-        hintLabel.MarginTop = 10;
-        Append(hintLabel);
-
-        var keyController = EventControllerKey.New();
-        keyController.OnKeyPressed += OnKeyPressed;
-        AddController(keyController);
-
         Render(new ScreenshotViewState.Idle());
     }
 
@@ -141,7 +130,6 @@ public sealed class ScreenshotPage : Box
             _ => throw new InvalidOperationException($"Unhandled state: {state.GetType().Name}")
         };
 
-        _shortcutsEnabled = state is ScreenshotViewState.Idle;
         _statusLabel.SetLabel(status);
         _selectionButton.Sensitive = modesSensitive;
         _screenButton.Sensitive = modesSensitive;
@@ -151,10 +139,10 @@ public sealed class ScreenshotPage : Box
         _previewFrame.Visible = showPreview;
         _resultBox.Visible = showResult;
 
-        if (state is ScreenshotViewState.Saved { Preview: not null } saved)
+        if (state is ScreenshotViewState.Saved saved)
         {
-            SetPreview(saved.Preview);
-            InstallPreviewDrag(saved.Media, saved.Preview);
+            SetPreview(saved.Image.Preview);
+            InstallPreviewDrag(saved.Media, saved.Image.Preview);
         }
         else
         {
@@ -166,38 +154,6 @@ public sealed class ScreenshotPage : Box
     {
         ClearPreview();
         base.Dispose();
-    }
-
-    private bool OnKeyPressed(EventControllerKey sender, EventControllerKey.KeyPressedSignalArgs args)
-    {
-        if (!_shortcutsEnabled)
-            return false;
-
-        switch (args.Keyval)
-        {
-            case 's':
-            case 'S':
-                IntentRaised?.Invoke(new ScreenshotIntent.CaptureSelection(PointerCapture));
-                return true;
-
-            case 'c':
-            case 'C':
-                IntentRaised?.Invoke(new ScreenshotIntent.CaptureScreen(PointerCapture));
-                return true;
-
-            case 'w':
-            case 'W':
-                IntentRaised?.Invoke(new ScreenshotIntent.CaptureWindow(PointerCapture));
-                return true;
-
-            case 'p':
-            case 'P':
-                _showPointerCheck.Active = !_showPointerCheck.Active;
-                return true;
-
-            default:
-                return false;
-        }
     }
 
     private void SetPreview(Gdk.Texture texture)

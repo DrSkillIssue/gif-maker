@@ -71,22 +71,25 @@ public sealed class ScreenshotSession
             result =>
             {
                 var media = new SavedMedia(result.File.Path);
-                var preview = LoadPreview(result.File.Path);
-                return Result<ScreenshotViewState>.Ok(new ScreenshotViewState.Saved(media, result.Region, preview));
+                return LoadImage(result.File.Path).Match(
+                    image => Result<ScreenshotViewState>.Ok(new ScreenshotViewState.Saved(media, result.Region, image)),
+                    Result<ScreenshotViewState>.Fail);
             },
             Result<ScreenshotViewState>.Fail);
     }
 
-    private Gdk.Texture? LoadPreview(string filePath)
+    private Result<ScreenshotImage> LoadImage(string filePath)
     {
         try
         {
-            return Gdk.Texture.NewFromFilename(filePath);
+            var pngBytes = File.ReadAllBytes(filePath);
+            var preview = Gdk.Texture.NewFromFilename(filePath);
+            return Result<ScreenshotImage>.Ok(new ScreenshotImage(preview, pngBytes));
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            _logger.LogWarning(ex, "Failed to load screenshot preview");
-            return null;
+            _logger.LogWarning(ex, "Failed to load screenshot image");
+            return Result<ScreenshotImage>.Fail($"Failed to load screenshot image: {ex.Message}");
         }
     }
 }

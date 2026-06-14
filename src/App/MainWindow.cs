@@ -17,6 +17,7 @@ public sealed class MainWindow : Window
     private const int WindowWidth = 420;
     private const int WindowHeight = 350;
     private const int MaxStatusLength = 80;
+    private const string ScreenshotPngMime = "image/png";
 
     private readonly AppServices _services;
     private readonly ILogger<MainWindow> _logger;
@@ -30,6 +31,8 @@ public sealed class MainWindow : Window
     private RecordViewState _recordState = new RecordViewState.Idle();
     private ScreenshotViewState _screenshotState = new ScreenshotViewState.Idle();
     private ScreenPoint? _savedPosition;
+    private GLib.Bytes? _screenshotClipboardBytes;
+    private Gdk.ContentProvider? _screenshotClipboardProvider;
 
     internal MainWindow(
         Application app,
@@ -123,7 +126,7 @@ public sealed class MainWindow : Window
                 case RecordIntent.CopySaved:
                     if (_recordState is RecordViewState.Saved copiedRecording)
                     {
-                        _services.DesktopFiles.CopyToClipboard(this, copiedRecording.Media).Match(
+                        _services.DesktopFiles.CopyFileToClipboard(this, copiedRecording.Media).Match(
                             _ => { },
                             error => RenderRecord(new RecordViewState.Error(error)));
                     }
@@ -216,9 +219,13 @@ public sealed class MainWindow : Window
                 case ScreenshotIntent.CopySaved:
                     if (_screenshotState is ScreenshotViewState.Saved copiedScreenshot)
                     {
-                        _services.DesktopFiles.CopyToClipboard(this, copiedScreenshot.Media).Match(
-                            _ => { },
-                            error => RenderScreenshot(new ScreenshotViewState.Error(error)));
+                        if (!PublishScreenshotToClipboard(copiedScreenshot.Image))
+                        {
+                            RenderScreenshot(new ScreenshotViewState.Error("Failed to copy screenshot image to clipboard"));
+                            break;
+                        }
+
+                        _logger.LogInformation("Screenshot image copied to clipboard");
                     }
                     break;
 
@@ -248,16 +255,7 @@ public sealed class MainWindow : Window
         var result = await session.CaptureSelectionAsync(
             pointer,
             HideForExternalSelection());
-        result.Match(
-            RenderScreenshot,
-            error => RenderScreenshot(new ScreenshotViewState.Error(Truncate(error))));
-
-        if (_screenshotState is ScreenshotViewState.Saved saved)
-        {
-            var copyResult = _services.DesktopFiles.CopyToClipboard(this, saved.Media);
-            if (copyResult.IsSuccess)
-                _logger.LogInformation("Screenshot copied to clipboard");
-        }
+        CompleteScreenshotCapture(result);
     }
 
     private async Task CaptureScreenAsync(ScreenPointerCapture pointer)
@@ -272,16 +270,7 @@ public sealed class MainWindow : Window
             pointer,
             ScreenshotDestination.Default);
         var result = await session.CaptureAsync(capture);
-        result.Match(
-            RenderScreenshot,
-            error => RenderScreenshot(new ScreenshotViewState.Error(Truncate(error))));
-
-        if (_screenshotState is ScreenshotViewState.Saved saved)
-        {
-            var copyResult = _services.DesktopFiles.CopyToClipboard(this, saved.Media);
-            if (copyResult.IsSuccess)
-                _logger.LogInformation("Screenshot copied to clipboard");
-        }
+        CompleteScreenshotCapture(result);
     }
 
     private async Task CaptureWindowAsync(ScreenPointerCapture pointer)
@@ -296,16 +285,52 @@ public sealed class MainWindow : Window
             pointer,
             ScreenshotDestination.Default);
         var result = await session.CaptureAsync(capture);
-        result.Match(
-            RenderScreenshot,
-            error => RenderScreenshot(new ScreenshotViewState.Error(Truncate(error))));
+        CompleteScreenshotCapture(result);
+    }
 
-        if (_screenshotState is ScreenshotViewState.Saved saved)
+    private void CompleteScreenshotCapture(Result<ScreenshotViewState> result)
+    {
+        result.Match(
+            state =>
+            {
+                if (state is ScreenshotViewState.Saved saved)
+                {
+                    if (!PublishScreenshotToClipboard(saved.Image))
+                    {
+                        RenderScreenshot(new ScreenshotViewState.Error("Failed to copy screenshot image to clipboard"));
+                        return;
+                    }
+
+                    _logger.LogInformation("Screenshot image copied to clipboard");
+                }
+
+                RenderScreenshot(state);
+            },
+            error => RenderScreenshot(new ScreenshotViewState.Error(Truncate(error))));
+    }
+
+    private bool PublishScreenshotToClipboard(ScreenshotImage image)
+    {
+        var pngBytes = GLib.Bytes.New(image.PngBytes);
+        var provider = Gdk.ContentProvider.NewForBytes(ScreenshotPngMime, pngBytes);
+        var copied = GdkClipboardNative.GdkClipboardSetContent(
+            GetClipboard().Handle.DangerousGetHandle(),
+            provider.Handle.DangerousGetHandle());
+
+        if (!copied)
         {
-            var copyResult = _services.DesktopFiles.CopyToClipboard(this, saved.Media);
-            if (copyResult.IsSuccess)
-                _logger.LogInformation("Screenshot copied to clipboard");
+            provider.Dispose();
+            pngBytes.Dispose();
+            return false;
         }
+
+        var oldProvider = _screenshotClipboardProvider;
+        var oldBytes = _screenshotClipboardBytes;
+        _screenshotClipboardProvider = provider;
+        _screenshotClipboardBytes = pngBytes;
+        oldProvider?.Dispose();
+        oldBytes?.Dispose();
+        return true;
     }
 
     private void RenderRecord(RecordViewState state)
@@ -370,6 +395,10 @@ public sealed class MainWindow : Window
         _recordingSession?.DisposeAsync().AsTask().GetAwaiter().GetResult();
         _recordingSession = null;
         _screenshotSession = null;
+        _screenshotClipboardProvider?.Dispose();
+        _screenshotClipboardProvider = null;
+        _screenshotClipboardBytes?.Dispose();
+        _screenshotClipboardBytes = null;
         _recordPage.Dispose();
         _screenshotPage.Dispose();
     }
