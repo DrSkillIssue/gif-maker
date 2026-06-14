@@ -56,7 +56,7 @@ public sealed class ScreenshotSelectionActionTests
     }
 
     [Fact(Timeout = 45000)]
-    public async Task CaptureSelectionCopiesImagePixelsToClipboardEveryTime()
+    public async Task CaptureSelectionWaitsForEnterAndCopiesImagePixelsEveryTime()
     {
         if (!IntegrationEnvironment.IsAvailable(_output) || !ClipboardAssertions.IsAvailable(_output))
             return;
@@ -79,6 +79,18 @@ public sealed class ScreenshotSelectionActionTests
             if (!X11Pointer.DragSelection(selectionWindow))
             {
                 _output.WriteLine("Skipping X11 integration test: XTest pointer automation is unavailable.");
+                return;
+            }
+
+            var selectionWindowsBeforeEnter = (await X11WindowCatalog.ReadAsync())
+                .Where(window => window.ProcessId == app.ProcessId && window.Title == "Select screenshot area")
+                .ToArray();
+            Assert.Single(selectionWindowsBeforeEnter);
+            await ClipboardAssertions.WaitUntilPngUnavailableAsync(TimeSpan.FromMilliseconds(500));
+
+            if (!X11Pointer.PressEnter())
+            {
+                _output.WriteLine("Skipping X11 integration test: XTest key automation is unavailable.");
                 return;
             }
 
@@ -467,6 +479,7 @@ internal static partial class X11Pointer
 {
     private const int CurrentScreen = -1;
     private const uint LeftButton = 1;
+    private const nint ReturnKeySym = 0xff0d;
     private const ulong NoDelay = 0;
     private const ulong ShortDelay = 50;
 
@@ -504,6 +517,32 @@ internal static partial class X11Pointer
         }
     }
 
+    public static bool PressEnter()
+    {
+        var display = XOpenDisplay(nint.Zero);
+        if (display == nint.Zero)
+            return false;
+
+        try
+        {
+            if (XTestQueryExtension(display, out _, out _, out _, out _) == 0)
+                return false;
+
+            var keycode = XKeysymToKeycode(display, ReturnKeySym);
+            if (keycode == 0)
+                return false;
+
+            _ = XTestFakeKeyEvent(display, keycode, true, NoDelay);
+            _ = XTestFakeKeyEvent(display, keycode, false, ShortDelay);
+            _ = XFlush(display);
+            return true;
+        }
+        finally
+        {
+            _ = XCloseDisplay(display);
+        }
+    }
+
     [LibraryImport("libX11.so.6")]
     private static partial nint XOpenDisplay(nint display);
 
@@ -512,6 +551,9 @@ internal static partial class X11Pointer
 
     [LibraryImport("libX11.so.6")]
     private static partial int XFlush(nint display);
+
+    [LibraryImport("libX11.so.6")]
+    private static partial uint XKeysymToKeycode(nint display, nint keysym);
 
     [LibraryImport("libXtst.so.6")]
     private static partial int XTestQueryExtension(
@@ -534,6 +576,13 @@ internal static partial class X11Pointer
         int screen,
         int x,
         int y,
+        ulong delay);
+
+    [LibraryImport("libXtst.so.6")]
+    private static partial int XTestFakeKeyEvent(
+        nint display,
+        uint keycode,
+        [MarshalAs(UnmanagedType.Bool)] bool isPress,
         ulong delay);
 }
 

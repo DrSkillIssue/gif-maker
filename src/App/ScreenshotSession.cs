@@ -35,14 +35,13 @@ public sealed class ScreenshotSession
 
     public async Task<Result<ScreenshotViewState>> CaptureSelectionAsync(
         ScreenPointerCapture pointer,
-        WindowVisibilityLease visibility,
-        CancellationToken ct = default)
+        WindowVisibilityLease visibility)
     {
         using var hiddenWindow = visibility;
 
-        await Task.Delay(WindowHideDelayMs, ct);
+        await Task.Delay(WindowHideDelayMs);
 
-        var freezeResult = await _screenshotService.FreezeScreenAsync(pointer, ct);
+        var freezeResult = await _screenshotService.FreezeScreenAsync(pointer);
         if (!freezeResult.IsSuccess)
             return freezeResult.Match(
                 _ => throw new InvalidOperationException("Unreachable result state"),
@@ -50,7 +49,7 @@ public sealed class ScreenshotSession
 
         using var frozen = freezeResult.GetValueOrThrow();
         using var selectionWindow = new FrozenScreenshotSelectionWindow(_application, frozen);
-        var selectionResult = await selectionWindow.SelectAsync(ct);
+        var selectionResult = await selectionWindow.SelectAsync();
         if (!selectionResult.IsSuccess)
             return selectionResult.Match(
                 _ => throw new InvalidOperationException("Unreachable result state"),

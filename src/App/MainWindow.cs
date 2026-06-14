@@ -17,7 +17,6 @@ public sealed class MainWindow : Window
     private const int WindowWidth = 420;
     private const int WindowHeight = 350;
     private const int MaxStatusLength = 80;
-    private const string ScreenshotPngMime = "image/png";
 
     private readonly AppServices _services;
     private readonly ILogger<MainWindow> _logger;
@@ -31,8 +30,7 @@ public sealed class MainWindow : Window
     private RecordViewState _recordState = new RecordViewState.Idle();
     private ScreenshotViewState _screenshotState = new ScreenshotViewState.Idle();
     private ScreenPoint? _savedPosition;
-    private GLib.Bytes? _screenshotClipboardBytes;
-    private Gdk.ContentProvider? _screenshotClipboardProvider;
+    private Gdk.Texture? _screenshotClipboardTexture;
 
     internal MainWindow(
         Application app,
@@ -311,26 +309,24 @@ public sealed class MainWindow : Window
 
     private bool PublishScreenshotToClipboard(ScreenshotImage image)
     {
-        var pngBytes = GLib.Bytes.New(image.PngBytes);
-        var provider = Gdk.ContentProvider.NewForBytes(ScreenshotPngMime, pngBytes);
-        var copied = GdkClipboardNative.GdkClipboardSetContent(
-            GetClipboard().Handle.DangerousGetHandle(),
-            provider.Handle.DangerousGetHandle());
-
-        if (!copied)
+        Gdk.Texture? clipboardTexture = null;
+        try
         {
-            provider.Dispose();
-            pngBytes.Dispose();
+            using var pngBytes = GLib.Bytes.New(image.PngBytes);
+            clipboardTexture = Gdk.Texture.NewFromBytes(pngBytes);
+            GetClipboard().SetTexture(clipboardTexture);
+
+            var oldTexture = _screenshotClipboardTexture;
+            _screenshotClipboardTexture = clipboardTexture;
+            oldTexture?.Dispose();
+            return true;
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            clipboardTexture?.Dispose();
+            _logger.LogWarning(ex, "Failed to publish screenshot image to clipboard");
             return false;
         }
-
-        var oldProvider = _screenshotClipboardProvider;
-        var oldBytes = _screenshotClipboardBytes;
-        _screenshotClipboardProvider = provider;
-        _screenshotClipboardBytes = pngBytes;
-        oldProvider?.Dispose();
-        oldBytes?.Dispose();
-        return true;
     }
 
     private void RenderRecord(RecordViewState state)
@@ -395,10 +391,8 @@ public sealed class MainWindow : Window
         _recordingSession?.DisposeAsync().AsTask().GetAwaiter().GetResult();
         _recordingSession = null;
         _screenshotSession = null;
-        _screenshotClipboardProvider?.Dispose();
-        _screenshotClipboardProvider = null;
-        _screenshotClipboardBytes?.Dispose();
-        _screenshotClipboardBytes = null;
+        _screenshotClipboardTexture?.Dispose();
+        _screenshotClipboardTexture = null;
         _recordPage.Dispose();
         _screenshotPage.Dispose();
     }

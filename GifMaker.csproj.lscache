@@ -13,19 +13,8 @@ primary
 lastDtbSucceeded
 
 [properties]
-AssemblyName=GifMaker
-CommandLineArgsForDesignTimeEvaluation=-langversion:14.0 -define:TRACE
-CompilerGeneratedFilesOutputPath=
-MaxSupportedLangVersion=14.0
-ProjectAssetsFile=<PATH>obj/project.assets.json
-RootNamespace=GifMaker
-RunAnalyzers=
-RunAnalyzersDuringLiveAnalysis=
-SolutionPath=*Undefined*
-TargetFrameworkIdentifier=.NETCoreApp
-TargetPath=<PATH>bin/Debug/net10.0/linux-x64/GifMaker.dll
-TargetRefPath=<PATH>obj/Debug/net10.0/linux-x64/ref/GifMaker.dll
-TemporaryDependencyNodeTargetIdentifier=net10.0
+TargetPath=<PATH>bin/Debug/net10.0/GifMaker.dll
+TargetRefPath=<PATH>obj/Debug/net10.0/ref/GifMaker.dll
 
 [commandLineArguments]
 /noconfig
@@ -34,7 +23,6 @@ TemporaryDependencyNodeTargetIdentifier=net10.0
 /nowarn:1701,1702,1701,1702,8002
 /fullpaths
 /nostdlib+
-/platform:x64
 /errorreport:prompt
 /warn:10
 /define:TRACE;DEBUG;NET;NET10_0;NETCOREAPP;NET5_0_OR_GREATER;NET6_0_OR_GREATER;NET7_0_OR_GREATER;NET8_0_OR_GREATER;NET9_0_OR_GREATER;NET10_0_OR_GREATER;NETCOREAPP1_0_OR_GREATER;NETCOREAPP1_1_OR_GREATER;NETCOREAPP2_0_OR_GREATER;NETCOREAPP2_1_OR_GREATER;NETCOREAPP2_2_OR_GREATER;NETCOREAPP3_0_OR_GREATER;NETCOREAPP3_1_OR_GREATER
@@ -45,8 +33,8 @@ TemporaryDependencyNodeTargetIdentifier=net10.0
 /debug:portable
 /filealign:512
 /optimize-
-/out:obj/Debug/net10.0/linux-x64/GifMaker.dll
-/refout:obj/Debug/net10.0/linux-x64/refint/GifMaker.dll
+/out:obj/Debug/net10.0/GifMaker.dll
+/refout:obj/Debug/net10.0/refint/GifMaker.dll
 /target:exe
 /warnaserror-
 /utf8output
@@ -55,7 +43,7 @@ TemporaryDependencyNodeTargetIdentifier=net10.0
 /warnaserror+:NU1605,SYSLIB0011
 
 [sourceFiles]
-obj/Debug/net10.0/linux-x64/
+obj/Debug/net10.0/
  .NETCoreApp,Version=v10.0.AssemblyAttributes.cs
  GifMaker.AssemblyInfo.cs
  GifMaker.GlobalUsings.g.cs
@@ -314,4 +302,4 @@ src/
 
 [analyzerConfigFiles]
 <DOTNET>/sdk/11.0.100-preview.4.26230.115/Sdks/Microsoft.NET.Sdk/analyzers/build/config/analysislevel_10_default.globalconfig
-obj/Debug/net10.0/linux-x64/GifMaker.GeneratedMSBuildEditorConfig.editorconfig
+obj/Debug/net10.0/GifMaker.GeneratedMSBuildEditorConfig.editorconfig
